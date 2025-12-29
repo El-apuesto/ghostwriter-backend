@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     dialogue_model: str = "wizard-vicuna-uncensored"  # For dialogue
     biography_model: str = "qwen2.5:32b"         # For biographies
     
+    # Authentication
+    jwt_secret_key: str = "your-super-secret-jwt-key-change-in-production"
+    jwt_algorithm: str = "HS256"
+    jwt_expiration_days: int = 7
+    
     # Stripe
     stripe_secret_key: str
     stripe_publishable_key: str
@@ -32,5 +37,39 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+
+# Credit costs
+CREDIT_COSTS = {
+    # Fiction
+    "fiction_sample": 0,
+    "fiction_novella": 50,
+    "fiction_novel": 100,
+    
+    # Biography
+    "biography_sample": 0,
+    "biography_short_memoir": 50,
+    "biography_standard": 75,
+    "biography_comprehensive": 125,
+    
+    # Extras
+    "ebook_cover": 10,
+    "print_cover": 15,
+    "epub_export": 5,
+    "mobi_export": 5,
+    "kdp_pdf": 10,
+    "blurb": 5,
+    "author_bio": 3,
+}
+
+# Credit packs (price in cents, credits amount)
+CREDIT_PACKS = {
+    "micro": {"price": 500, "credits": 20, "name": "Micro Top-Up"},
+    "small": {"price": 1000, "credits": 40, "name": "Small Top-Up"},
+    "medium": {"price": 1500, "credits": 60, "name": "Medium Top-Up"},
+    "starter": {"price": 2500, "credits": 100, "name": "Starter Pack"},
+    "value": {"price": 6000, "credits": 250, "name": "Value Pack", "bonus": 4},
+    "pro": {"price": 12000, "credits": 550, "name": "Pro Pack", "bonus": 15},
+    "ultimate": {"price": 24000, "credits": 1200, "name": "Ultimate Pack", "bonus": 25},
+}
 
 settings = Settings()
