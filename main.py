@@ -1,19 +1,32 @@
 import os
 import json
 import logging
-from datetime import datetime, timedelta
-from typing import Dict
+from datetime import datetime
+from typing import List
 
 import stripe
 from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, desc
 from sqlalchemy.orm import sessionmaker, Session
 
-from config import settings
-from models import Base, User, Story
-from schemas import FictionRequest, BiographyRequest, StoryResponse, FictionLength, BiographyLength
-from llm_client import llm, GHOSTWRITER_FICTION, GHOSTWRITER_BIOGRAPHY
+from config import settings, CREDIT_COSTS, CREDIT_PACKS
+from models import Base, User, Story, Transaction, StoryExtra, CreditPack
+from schemas import (
+    UserSignup, UserLogin, TokenResponse, UserProfile,
+    FictionRequest, BiographyRequest,
+    StoryResponse, StoryDetail,
+    GenerateExtraRequest, ExtraResponse,
+    CreditPackPurchase, TransactionHistory
+)
+from auth import create_access_token, get_current_user
+from story_generation import generate_fiction_story, generate_biography_story
+from extras_generation import (
+    generate_book_cover, generate_epub_export,
+    generate_mobi_export, generate_kdp_pdf,
+    generate_blurb, generate_author_bio
+)
+from webhooks import handle_stripe_webhook
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -32,9 +45,9 @@ stripe.api_key = settings.stripe_secret_key
 
 # FastAPI app
 app = FastAPI(
-    title="GhostWriter API",
-    description="AI-powered fiction and biography generator with sarcastic wit",
-    version="1.0.0"
+    title="GhostWriter API v2",
+    description="AI-powered story generator with credit system and Llama 70B",
+    version="2.0.0"
 )
 
 app.add_middleware(
@@ -52,200 +65,127 @@ def get_db():
     finally:
         db.close()
 
-# ===== STORY GENERATION FUNCTIONS =====
-
-def generate_fiction(request: FictionRequest, db: Session) -> Dict:
-    """Generate fiction story"""
-    word_counts = {"sample": 1500, "novella": 30000, "novel": 80000}
-    target = word_counts[request.story_length]
-    
-    logger.info(f"Generating fiction: {request.premise[:50]}...")
-    
-    # Step 1: Generate outline
-    outline_prompt = f"""Create a story outline for:
-Premise: {request.premise}
-Length: {target} words
-Style: {request.style.value if request.style else 'sarcastic_deadpan'}
-Genre: {request.genre.value if request.genre else 'choose best fit'}
-Setting: {request.setting or 'choose atmospheric setting'}
-{f'Characters: {json.dumps([c.dict() for c in request.characters])}' if request.characters else ''}
-{f'Themes: {request.themes}' if request.themes else ''}
-
-Generate JSON with: title, chapters (array with title, synopsis), characters, themes"""
-    
-    outline_text = llm.generate(outline_prompt, GHOSTWRITER_FICTION, settings.structured_model)
-    
+# Initialize credit packs in database
+@app.on_event("startup")
+def init_credit_packs():
+    db = SessionLocal()
     try:
-        outline = json.loads(outline_text)
-    except:
-        # If JSON parsing fails, create a simple outline
-        outline = {
-            "title": request.title or "Untitled Story",
-            "chapters": [{"title": "Chapter 1", "synopsis": request.premise}],
-            "themes": request.themes or []
-        }
-    
-    # Step 2: Generate chapters (limit for sample)
-    max_chapters = 2 if request.story_length == FictionLength.SAMPLE else len(outline.get("chapters", []))
-    chapters = []
-    context = ""
-    
-    for i, ch_spec in enumerate(outline.get("chapters", [])[:max_chapters]):
-        logger.info(f"Generating chapter {i+1}/{max_chapters}")
-        chapter_prompt = f"""Write Chapter: {ch_spec.get('title', f'Chapter {i+1}')}
-Synopsis: {ch_spec.get('synopsis', '')}
-Previous context: {context[-1000:]}
-Write 2000-3000 words in {request.style.value if request.style else 'sarcastic_deadpan'} style."""
-        
-        content = llm.generate(chapter_prompt, GHOSTWRITER_FICTION, settings.creative_model)
-        chapters.append({
-            "number": i+1,
-            "title": ch_spec.get('title', f'Chapter {i+1}'),
-            "content": content
-        })
-        context = content
-    
-    # Step 3: Save
-    story = Story(
-        user_email=request.email,
-        story_type="fiction",
-        title=outline.get("title", request.title or "Untitled"),
-        length_type=request.story_length.value,
-        content=json.dumps(chapters),
-        metadata=json.dumps({
-            "premise": request.premise,
-            "style": request.style.value if request.style else "sarcastic_deadpan",
-            "genre": request.genre.value if request.genre else None
-        }),
-        generation_status="complete",
-        completed_at=datetime.utcnow()
-    )
-    db.add(story)
-    db.commit()
-    db.refresh(story)
-    
-    return {
-        "story_id": story.id,
-        "title": story.title,
-        "chapters": chapters,
-        "word_count": sum(len(ch['content'].split()) for ch in chapters)
-    }
+        for pack_key, pack_data in CREDIT_PACKS.items():
+            existing = db.query(CreditPack).filter(CreditPack.name == pack_key).first()
+            if not existing:
+                credit_pack = CreditPack(
+                    name=pack_key,
+                    price_usd=pack_data["price"] / 100,
+                    credits=pack_data["credits"],
+                    bonus_percentage=pack_data.get("bonus", 0)
+                )
+                db.add(credit_pack)
+        db.commit()
+        logger.info("Credit packs initialized")
+    finally:
+        db.close()
 
-def generate_biography(request: BiographyRequest, db: Session) -> Dict:
-    """Generate biography"""
-    word_counts = {"sample": 2000, "short_memoir": 15000, "standard_biography": 40000, "comprehensive": 80000}
-    target = word_counts[request.story_length]
-    
-    logger.info(f"Generating biography: {request.subject_names}")
-    
-    # Build detailed prompt
-    details = []
-    if request.birth_details:
-        details.append(f"Birth: {json.dumps(request.birth_details)}")
-    if request.family_background:
-        details.append(f"Family: {json.dumps(request.family_background)}")
-    if request.career:
-        details.append(f"Career: {json.dumps(request.career)}")
-    if request.major_events:
-        details.append(f"Major Events: {json.dumps([e.dict() for e in request.major_events])}")
-    if request.personality:
-        details.append(f"Personality: {json.dumps(request.personality)}")
-    
-    bio_prompt = f"""Write a {request.biography_type.value} about: {request.subject_names}
-Time Period: {request.time_period_start} to {request.time_period_end}
-Target Length: {target} words
-Narrative Voice: {request.narrative_voice.value if request.narrative_voice else 'third_person_limited'}
-
-Details provided:
-{chr(10).join(details) if details else 'Limited information - infer from context and create plausible, contextually appropriate details'}
-
-Create a compelling life story. Fill in missing details with historically accurate, contextually appropriate content.
-Structure as chapters covering different life periods. Make it engaging and human."""
-    
-    content = llm.generate(bio_prompt, GHOSTWRITER_BIOGRAPHY, settings.biography_model)
-    
-    # Save
-    story = Story(
-        user_email=request.email,
-        story_type="biography",
-        title=f"The Life of {request.subject_names}",
-        length_type=request.story_length.value,
-        content=content,
-        metadata=json.dumps({
-            "subject": request.subject_names,
-            "type": request.biography_type.value,
-            "time_period": f"{request.time_period_start} - {request.time_period_end}"
-        }),
-        generation_status="complete",
-        completed_at=datetime.utcnow()
-    )
-    db.add(story)
-    db.commit()
-    db.refresh(story)
-    
-    return {
-        "story_id": story.id,
-        "title": story.title,
-        "content": content,
-        "word_count": len(content.split())
-    }
-
-# ===== API ROUTES =====
+# ===== ROOT & HEALTH =====
 
 @app.get("/")
 def root():
     return {
-        "message": "👻 GhostWriter API - Hauntingly good stories",
-        "version": "1.0.0",
-        "endpoints": [
-            "/api/generate-fiction-sample",
-            "/api/generate-biography-sample",
-            "/api/create-checkout",
-            "/api/create-subscription",
-            "/api/story/{story_id}"
-        ]
+        "message": "👻 GhostWriter API v2 - Credit System with Llama 70B",
+        "version": "2.0.0",
+        "features": [
+            "User authentication",
+            "Credit system (7 packs)",
+            "Fiction & Biography generation",
+            "Book covers (eBook + Print)",
+            "Exports (ePub, MOBI, PDF)",
+            "Marketing content (Blurbs, Bios)"
+        ],
+        "pricing": "100 credits = $12 | Novel = 100 credits"
     }
 
 @app.get("/health")
 def health_check():
-    return {"status": "alive", "llm_provider": settings.llm_provider}
-
-@app.post("/api/generate-fiction-sample")
-def fiction_sample(request: FictionRequest, db: Session = Depends(get_db)):
-    if request.story_length != FictionLength.SAMPLE:
-        raise HTTPException(400, "This endpoint only generates free samples")
-    
-    try:
-        story = generate_fiction(request, db)
-        return {"story": story, "message": "Your ghostly tale awaits..."}
-    except Exception as e:
-        logger.error(f"Fiction generation failed: {str(e)}")
-        raise HTTPException(500, f"The spirits are being difficult: {str(e)}")
-
-@app.post("/api/generate-biography-sample")
-def biography_sample(request: BiographyRequest, db: Session = Depends(get_db)):
-    if request.story_length != BiographyLength.SAMPLE:
-        raise HTTPException(400, "This endpoint only generates free samples")
-    
-    try:
-        story = generate_biography(request, db)
-        return {"story": story, "message": "Your life story has been summoned..."}
-    except Exception as e:
-        logger.error(f"Biography generation failed: {str(e)}")
-        raise HTTPException(500, f"The spirits are uncooperative: {str(e)}")
-
-@app.post("/api/create-checkout")
-def create_checkout(story_type: str, email: str):
-    prices = {
-        "novella": 999,
-        "novel": 1999,
-        "short_memoir": 999,
-        "standard_biography": 1499,
-        "comprehensive": 2499
+    return {
+        "status": "alive",
+        "llm_provider": settings.llm_provider,
+        "model": "Llama 3.3 70B"
     }
+
+# ===== AUTHENTICATION =====
+
+@app.post("/api/auth/signup", response_model=TokenResponse)
+def signup(user_data: UserSignup, db: Session = Depends(get_db)):
+    existing = db.query(User).filter(User.email == user_data.email).first()
+    if existing:
+        raise HTTPException(400, "Email already registered")
     
-    if story_type not in prices:
-        raise HTTPException(400, f"Invalid story type: {story_type}")
+    user = User(email=user_data.email, full_name=user_data.full_name)
+    user.set_password(user_data.password)
+    
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    
+    token = create_access_token({"user_id": user.id, "email": user.email})
+    
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "credits_balance": user.credits_balance
+        }
+    }
+
+@app.post("/api/auth/login", response_model=TokenResponse)
+def login(credentials: UserLogin, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == credentials.email).first()
+    
+    if not user or not user.check_password(credentials.password):
+        raise HTTPException(401, "Invalid email or password")
+    
+    if not user.is_active:
+        raise HTTPException(403, "Account is inactive")
+    
+    user.last_login = datetime.utcnow()
+    db.commit()
+    
+    token = create_access_token({"user_id": user.id, "email": user.email})
+    
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "full_name": user.full_name,
+            "credits_balance": user.credits_balance
+        }
+    }
+
+@app.get("/api/auth/me", response_model=UserProfile)
+def get_profile(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    return current_user
+
+# ===== CREDITS =====
+
+@app.get("/api/credits/packs")
+def get_credit_packs(db: Session = Depends(get_db)):
+    return [{"key": k, **v} for k, v in CREDIT_PACKS.items()]
+
+@app.post("/api/credits/purchase")
+def purchase_credits(
+    pack_request: CreditPackPurchase,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    pack = CREDIT_PACKS.get(pack_request.pack_type)
+    if not pack:
+        raise HTTPException(400, "Invalid credit pack")
     
     try:
         session = stripe.checkout.Session.create(
@@ -254,95 +194,238 @@ def create_checkout(story_type: str, email: str):
                 'price_data': {
                     'currency': 'usd',
                     'product_data': {
-                        'name': f'GhostWriter {story_type.replace("_", " ").title()}',
-                        'description': 'AI-generated story with sarcastic wit',
+                        'name': f"GhostWriter {pack['name']}",
+                        'description': f"{pack['credits']} credits for story generation",
                     },
-                    'unit_amount': prices[story_type],
+                    'unit_amount': pack['price'],
                 },
                 'quantity': 1,
             }],
             mode='payment',
-            success_url=f'{settings.frontend_url}/success?session_id={{CHECKOUT_SESSION_ID}}',
-            cancel_url=f'{settings.frontend_url}/cancel',
-            customer_email=email,
-            metadata={'story_type': story_type}
+            success_url=f"{settings.frontend_url}/dashboard?purchase=success",
+            cancel_url=f"{settings.frontend_url}/credits?purchase=cancelled",
+            customer_email=current_user.email,
+            metadata={
+                'user_id': current_user.id,
+                'pack_type': pack_request.pack_type,
+                'credits': pack['credits']
+            }
         )
         return {"checkout_url": session.url}
     except Exception as e:
-        raise HTTPException(500, f"Payment portal failed: {str(e)}")
+        raise HTTPException(500, f"Payment failed: {str(e)}")
 
-@app.post("/api/create-subscription")
-def create_subscription(email: str):
+@app.get("/api/credits/balance")
+def get_balance(current_user: User = Depends(get_current_user)):
+    return {
+        "credits_balance": current_user.credits_balance,
+        "total_purchased": current_user.total_credits_purchased,
+        "total_spent": current_user.total_credits_spent
+    }
+
+@app.get("/api/credits/transactions")
+def get_transactions(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    limit: int = 50
+):
+    transactions = db.query(Transaction).filter(
+        Transaction.user_id == current_user.id
+    ).order_by(desc(Transaction.created_at)).limit(limit).all()
+    return transactions
+
+# ===== STORY GENERATION =====
+
+@app.post("/api/generate/fiction")
+def create_fiction(
+    request: FictionRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     try:
-        session = stripe.checkout.Session.create(
-            payment_method_types=['card'],
-            line_items=[{
-                'price_data': {
-                    'currency': 'usd',
-                    'product_data': {
-                        'name': 'GhostWriter Unlimited',
-                        'description': 'Unlimited story generation',
-                    },
-                    'unit_amount': 2999,
-                    'recurring': {'interval': 'month'},
-                },
-                'quantity': 1,
-            }],
-            mode='subscription',
-            success_url=f'{settings.frontend_url}/success?session_id={{CHECKOUT_SESSION_ID}}',
-            cancel_url=f'{settings.frontend_url}/cancel',
-            customer_email=email,
-        )
-        return {"checkout_url": session.url}
+        result = generate_fiction_story(request, current_user, db)
+        return {
+            "success": True,
+            "story": result,
+            "message": f"Your {request.story_length.value} has been summoned!",
+            "credits_remaining": current_user.credits_balance
+        }
     except Exception as e:
-        raise HTTPException(500, f"Subscription failed: {str(e)}")
+        raise HTTPException(500, str(e))
+
+@app.post("/api/generate/biography")
+def create_biography(
+    request: BiographyRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        result = generate_biography_story(request, current_user, db)
+        return {
+            "success": True,
+            "story": result,
+            "message": f"Life story of {request.subject_names} is ready!",
+            "credits_remaining": current_user.credits_balance
+        }
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+# ===== STORY LIBRARY =====
+
+@app.get("/api/stories")
+def get_my_stories(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    limit: int = 50,
+    offset: int = 0
+):
+    stories = db.query(Story).filter(
+        Story.user_id == current_user.id
+    ).order_by(desc(Story.created_at)).offset(offset).limit(limit).all()
+    return stories
+
+@app.get("/api/stories/{story_id}")
+def get_story(
+    story_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    story = db.query(Story).filter(
+        Story.id == story_id,
+        Story.user_id == current_user.id
+    ).first()
+    
+    if not story:
+        raise HTTPException(404, "Story not found")
+    
+    # Parse content
+    content = json.loads(story.content) if story.story_type == "fiction" else story.content
+    metadata = json.loads(story.metadata) if story.metadata else {}
+    
+    return {
+        "id": story.id,
+        "title": story.title,
+        "story_type": story.story_type,
+        "length_type": story.length_type,
+        "content": content,
+        "metadata": metadata,
+        "credits_cost": story.credits_cost,
+        "has_ebook_cover": story.has_ebook_cover,
+        "has_print_cover": story.has_print_cover,
+        "has_epub": story.has_epub,
+        "has_mobi": story.has_mobi,
+        "has_pdf": story.has_pdf,
+        "has_blurb": story.has_blurb,
+        "has_author_bio": story.has_author_bio,
+        "created_at": story.created_at,
+        "completed_at": story.completed_at
+    }
+
+@app.delete("/api/stories/{story_id}")
+def delete_story(
+    story_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    story = db.query(Story).filter(
+        Story.id == story_id,
+        Story.user_id == current_user.id
+    ).first()
+    
+    if not story:
+        raise HTTPException(404, "Story not found")
+    
+    db.delete(story)
+    db.commit()
+    return {"success": True}
+
+# ===== EXTRAS (COVERS, EXPORTS, MARKETING) =====
+
+@app.post("/api/extras/cover")
+def create_cover(
+    story_id: int,
+    cover_type: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        result = generate_book_cover(story_id, cover_type, current_user, db)
+        return result
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+@app.post("/api/extras/epub/{story_id}")
+def create_epub(
+    story_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        result = generate_epub_export(story_id, current_user, db)
+        return result
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+@app.post("/api/extras/mobi/{story_id}")
+def create_mobi(
+    story_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        result = generate_mobi_export(story_id, current_user, db)
+        return result
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+@app.post("/api/extras/pdf/{story_id}")
+def create_pdf(
+    story_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        result = generate_kdp_pdf(story_id, current_user, db)
+        return result
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+@app.post("/api/extras/blurb/{story_id}")
+def create_blurb(
+    story_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        result = generate_blurb(story_id, current_user, db)
+        return result
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+@app.post("/api/extras/author-bio")
+def create_author_bio(
+    bio_info: str = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        result = generate_author_bio(current_user, db, bio_info)
+        return result
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+# ===== STRIPE WEBHOOK =====
 
 @app.post("/api/webhook")
 async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
-    payload = await request.body()
-    sig_header = request.headers.get('stripe-signature')
-    
     try:
-        event = stripe.Webhook.construct_event(
-            payload, sig_header, settings.stripe_webhook_secret
-        )
+        result = await handle_stripe_webhook(request, db)
+        return result
+    except HTTPException as e:
+        raise e
     except Exception as e:
-        raise HTTPException(400, f"Webhook error: {str(e)}")
-    
-    if event['type'] == 'checkout.session.completed':
-        session = event['data']['object']
-        email = session['customer_email']
-        
-        user = db.query(User).filter(User.email == email).first()
-        if not user:
-            user = User(email=email, stripe_customer_id=session['customer'])
-            db.add(user)
-        
-        if session['mode'] == 'subscription':
-            user.subscription_status = 'active'
-            user.subscription_end = datetime.utcnow() + timedelta(days=30)
-        
-        user.stories_generated += 1
-        db.commit()
-    
-    return {"status": "success"}
-
-@app.get("/api/story/{story_id}")
-def get_story(story_id: int, db: Session = Depends(get_db)):
-    story = db.query(Story).filter(Story.id == story_id).first()
-    if not story:
-        raise HTTPException(404, "Story vanished into the ether")
-    
-    content = json.loads(story.content) if story.story_type == "fiction" else story.content
-    
-    return {
-        "story_id": story.id,
-        "title": story.title,
-        "story_type": story.story_type,
-        "content": content,
-        "metadata": json.loads(story.metadata),
-        "created_at": story.created_at.isoformat()
-    }
+        logger.error(f"Webhook error: {str(e)}")
+        raise HTTPException(500, str(e))
 
 if __name__ == "__main__":
     import uvicorn
