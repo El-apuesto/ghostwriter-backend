@@ -6,15 +6,16 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./ghostwriter.db"
     
     # LLM Configuration
-    llm_provider: str = "ollama"  # or "groq"
+    llm_provider: str = "ollama"  # or "groq" or "xai"
     ollama_base_url: str = "http://localhost:11434"
     groq_api_key: Optional[str] = None
+    xai_api_key: Optional[str] = None
     
     # Model Selection
-    creative_model: str = "dolphin-mixtral"      # For creative fiction
-    structured_model: str = "deepseek-coder-v2"  # For outlines/structure
-    dialogue_model: str = "wizard-vicuna-uncensored"  # For dialogue
-    biography_model: str = "qwen2.5:32b"         # For biographies
+    creative_model: str = "grok-beta"           # For creative fiction
+    structured_model: str = "grok-beta"         # For outlines/structure
+    dialogue_model: str = "grok-beta"           # For dialogue
+    biography_model: str = "grok-beta"          # For biographies
     
     # Authentication
     jwt_secret_key: str = "your-super-secret-jwt-key-change-in-production"
