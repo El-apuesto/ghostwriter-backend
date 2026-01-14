@@ -67,7 +67,7 @@ class Story(Base):
     title = Column(String)
     length_type = Column(String)  # sample, novella, novel, etc.
     content = Column(Text)  # JSON string for chapters or full text
-    metadata = Column(Text)  # JSON string with premise, style, genre, etc.
+    story_metadata = Column(Text)  # JSON string with premise, style, genre, etc.
     
     # Generation
     generation_status = Column(String, default="pending")  # pending, generating, complete, error
