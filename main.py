@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import List
 
 import stripe
-from fastapi import FastAPI, HTTPException, Depends, Request
+from fastapi import FastAPI, HTTPException, Depends, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, desc
 from sqlalchemy.orm import sessionmaker, Session
@@ -96,11 +96,12 @@ def root():
             "User authentication",
             "Credit system (7 packs)",
             "Fiction & Biography generation",
-            "Book covers (eBook + Print)",
+            "FREE basic book covers",
+            "PREMIUM AI covers (4 options)",
             "Exports (ePub, MOBI, PDF)",
             "Marketing content (Blurbs, Bios)"
         ],
-        "pricing": "100 credits = $12 | Novel = 100 credits"
+        "pricing": "100 credits = $12 | Novel = 100 credits | AI Cover = 10 credits (4 options)"
     }
 
 @app.get("/health")
@@ -343,13 +344,20 @@ def delete_story(
 
 @app.post("/api/extras/cover")
 def create_cover(
-    story_id: int,
-    cover_type: str,
+    story_id: int = Query(..., description="Story ID"),
+    cover_type: str = Query(..., description="'ebook' or 'print'"),
+    premium: bool = Query(False, description="True = AI cover with 4 options (10 credits), False = Free basic cover (0 credits)"),
+    style: str = Query("dark", description="For basic covers: 'dark', 'mystery', 'fantasy', 'romance', 'scifi'"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    """
+    Generate book cover:
+    - FREE: Basic cover with professional design (0 credits)
+    - PREMIUM: 4 AI-generated options to choose from (10 credits)
+    """
     try:
-        result = generate_book_cover(story_id, cover_type, current_user, db)
+        result = generate_book_cover(story_id, cover_type, current_user, db, premium=premium, style=style)
         return result
     except Exception as e:
         raise HTTPException(500, str(e))
