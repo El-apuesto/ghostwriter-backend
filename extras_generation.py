@@ -9,100 +9,186 @@ import io
 from config import settings, CREDIT_COSTS
 from models import User, Story, StoryExtra, Transaction
 from llm_client import llm, GHOSTWRITER_FICTION
+from cover_generator import cover_gen
 
 logger = logging.getLogger(__name__)
 
 # ===== COVER GENERATION =====
 
-def generate_book_cover(story_id: int, cover_type: str, user: User, db: Session, options: dict = None) -> Dict:
-    """Generate AI book cover"""
+def generate_book_cover(story_id: int, cover_type: str, user: User, db: Session, 
+                       premium: bool = False, style: str = "dark") -> Dict:
+    """
+    Generate book cover - FREE basic or PREMIUM AI with 4 options
     
-    credit_cost = CREDIT_COSTS.get("ebook_cover" if cover_type == "ebook" else "print_cover", 10)
+    Args:
+        story_id: Story to generate cover for
+        cover_type: 'ebook' or 'print'
+        user: Current user
+        db: Database session
+        premium: If True, generate 4 AI options (costs 10 credits)
+                If False, generate 1 free basic cover (0 credits)
+        style: For basic covers - 'dark', 'mystery', 'fantasy', 'romance', 'scifi'
+    """
     
-    if user.credits_balance < credit_cost:
-        raise Exception(f"Insufficient credits. Need {credit_cost}, have {user.credits_balance}")
-    
+    # Get story
     story = db.query(Story).filter(Story.id == story_id, Story.user_id == user.id).first()
     if not story:
         raise Exception("Story not found")
     
+    # Parse metadata
     try:
-        # Parse story metadata for context
-        metadata = json.loads(story.metadata)
+        metadata = json.loads(story.metadata) if story.metadata else {}
+    except:
+        metadata = {}
+    
+    genre = metadata.get('genre', 'fiction')
+    themes = metadata.get('themes', [])
+    
+    # ===== FREE BASIC COVER =====
+    if not premium:
+        try:
+            logger.info(f"Generating FREE basic {cover_type} cover for story {story_id}")
+            
+            if cover_type == "ebook":
+                cover_path = cover_gen.create_basic_cover(
+                    title=story.title,
+                    author=user.full_name or "Anonymous",
+                    genre=genre,
+                    style=style,
+                    size=cover_gen.EBOOK_SIZE
+                )
+            else:  # print
+                # For print, we need page count estimate
+                page_count = metadata.get('estimated_pages', 200)
+                cover_path = cover_gen.create_print_cover(
+                    title=story.title,
+                    author=user.full_name or "Anonymous",
+                    page_count=page_count,
+                    size="6x9",
+                    genre=genre
+                )
+            
+            cover_data = {
+                "type": cover_type,
+                "premium": False,
+                "style": style,
+                "file_path": cover_path,
+                "dimensions": "1600x2560" if cover_type == "ebook" else "6x9 with spine",
+                "format": "PNG",
+                "status": "generated"
+            }
+            
+            # Save extra (0 credits)
+            extra = StoryExtra(
+                story_id=story.id,
+                extra_type=f"{cover_type}_cover",
+                content=json.dumps(cover_data),
+                credits_cost=0
+            )
+            db.add(extra)
+            
+            # Update story flag
+            if cover_type == "ebook":
+                story.has_ebook_cover = True
+            else:
+                story.has_print_cover = True
+            
+            db.commit()
+            db.refresh(extra)
+            
+            return {
+                "extra_id": extra.id,
+                "story_id": story.id,
+                "cover_type": cover_type,
+                "premium": False,
+                "cover_data": cover_data,
+                "credits_used": 0,
+                "message": f"FREE basic {cover_type} cover generated! Upgrade to premium for AI-designed covers."
+            }
+            
+        except Exception as e:
+            logger.error(f"Basic cover generation failed: {str(e)}")
+            raise Exception(f"Cover generation failed: {str(e)}")
+    
+    # ===== PREMIUM AI COVER (4 OPTIONS) =====
+    else:
+        credit_cost = CREDIT_COSTS.get("ebook_cover" if cover_type == "ebook" else "print_cover", 10)
         
-        # Generate cover description using LLM
-        cover_prompt = f"""Design a book cover for this story:
-
-TITLE: {story.title}
-GENRE: {metadata.get('genre', 'fiction')}
-STYLE: {metadata.get('style', 'dark and mysterious')}
-PREMISE: {metadata.get('premise', '')[:200]}
-
-Describe a compelling book cover design in 2-3 sentences:
-- Visual elements
-- Color palette  
-- Typography style
-- Overall mood
-
-Keep it professional and genre-appropriate."""
+        if user.credits_balance < credit_cost:
+            raise Exception(f"Insufficient credits. Need {credit_cost}, have {user.credits_balance}")
         
-        cover_description = llm.generate(cover_prompt, GHOSTWRITER_FICTION, "llama-3.3-70b-versatile")
-        
-        # For now, store the description (in production, you'd use DALL-E or Stable Diffusion)
-        # Placeholder for actual image generation
-        cover_data = {
-            "type": cover_type,
-            "description": cover_description,
-            "title": story.title,
-            "dimensions": "1600x2400" if cover_type == "ebook" else "6x9 inches with spine",
-            "format": "PNG",
-            "status": "generated"
-        }
-        
-        # Save extra
-        extra = StoryExtra(
-            story_id=story.id,
-            extra_type=f"{cover_type}_cover",
-            content=json.dumps(cover_data),
-            credits_cost=credit_cost
-        )
-        db.add(extra)
-        
-        # Update story flags
-        if cover_type == "ebook":
-            story.has_ebook_cover = True
-        else:
-            story.has_print_cover = True
-        
-        # Deduct credits
-        user.deduct_credits(credit_cost)
-        
-        # Log transaction
-        transaction = Transaction(
-            user_id=user.id,
-            transaction_type="extra_generation",
-            credits_amount=-credit_cost,
-            description=f"Generated {cover_type} cover for '{story.title}'",
-            status="completed",
-            story_id=story.id
-        )
-        db.add(transaction)
-        
-        db.commit()
-        db.refresh(extra)
-        
-        return {
-            "extra_id": extra.id,
-            "story_id": story.id,
-            "cover_type": cover_type,
-            "cover_data": cover_data,
-            "credits_used": credit_cost,
-            "message": f"{cover_type.title()} cover generated successfully!"
-        }
-        
-    except Exception as e:
-        logger.error(f"Cover generation failed: {str(e)}")
-        raise Exception(f"Cover generation failed: {str(e)}")
+        try:
+            logger.info(f"Generating PREMIUM AI {cover_type} cover with 4 options for story {story_id}")
+            
+            # Generate 4 AI cover options
+            ai_options = cover_gen.generate_ai_cover_options(
+                title=story.title,
+                author=user.full_name or "Anonymous",
+                genre=genre,
+                themes=themes,
+                style_preference=style
+            )
+            
+            if not ai_options:
+                raise Exception("Failed to generate AI cover options")
+            
+            cover_data = {
+                "type": cover_type,
+                "premium": True,
+                "ai_generated": True,
+                "options": ai_options,
+                "total_options": len(ai_options),
+                "dimensions": "1600x2560" if cover_type == "ebook" else "6x9 with spine",
+                "format": "JPG",
+                "status": "options_ready",
+                "note": "User must select one of the 4 options"
+            }
+            
+            # Save extra
+            extra = StoryExtra(
+                story_id=story.id,
+                extra_type=f"{cover_type}_cover_premium",
+                content=json.dumps(cover_data),
+                credits_cost=credit_cost
+            )
+            db.add(extra)
+            
+            # Update story flag
+            if cover_type == "ebook":
+                story.has_ebook_cover = True
+            else:
+                story.has_print_cover = True
+            
+            # Deduct credits
+            user.deduct_credits(credit_cost)
+            
+            # Log transaction
+            transaction = Transaction(
+                user_id=user.id,
+                transaction_type="extra_generation",
+                credits_amount=-credit_cost,
+                description=f"Generated PREMIUM AI {cover_type} cover (4 options) for '{story.title}'",
+                status="completed",
+                story_id=story.id
+            )
+            db.add(transaction)
+            
+            db.commit()
+            db.refresh(extra)
+            
+            return {
+                "extra_id": extra.id,
+                "story_id": story.id,
+                "cover_type": cover_type,
+                "premium": True,
+                "options": ai_options,
+                "credits_used": credit_cost,
+                "message": f"4 AI-generated {cover_type} cover options ready! Choose your favorite."
+            }
+            
+        except Exception as e:
+            logger.error(f"Premium AI cover generation failed: {str(e)}")
+            raise Exception(f"AI cover generation failed: {str(e)}")
 
 
 # ===== EXPORT GENERATION =====
