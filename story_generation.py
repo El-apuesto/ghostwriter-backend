@@ -37,7 +37,6 @@ def generate_fiction_story(request: FictionRequest, user: User, db: Session) -> 
     # Create story record
     story = Story(
         user_id=user.id,
-        user_email=user.email,
         story_type="fiction",
         title=request.title or "Untitled Story",
         length_type=request.story_length.value,
@@ -48,7 +47,9 @@ def generate_fiction_story(request: FictionRequest, user: User, db: Session) -> 
             "style": request.style.value if request.style else "sarcastic_deadpan",
             "genre": request.genre.value if request.genre else None,
             "setting": request.setting,
-            "themes": request.themes
+            "themes": request.themes,
+            "characters": [c.dict() for c in request.characters] if request.characters else [],
+            "timeline": [t.dict() for t in request.timeline] if request.timeline else []
         })
     )
     db.add(story)
@@ -56,6 +57,30 @@ def generate_fiction_story(request: FictionRequest, user: User, db: Session) -> 
     db.refresh(story)
     
     try:
+        # Build character descriptions
+        character_details = ""
+        if request.characters:
+            character_details = "\n\nCHARACTERS:\n"
+            for char in request.characters:
+                character_details += f"- {char.name}"
+                if char.role:
+                    character_details += f" ({char.role})"
+                if char.description:
+                    character_details += f": {char.description}"
+                if char.quirks:
+                    character_details += f" | Quirks: {', '.join(char.quirks)}"
+                character_details += "\n"
+        
+        # Build timeline structure
+        timeline_structure = ""
+        if request.timeline:
+            timeline_structure = "\n\nKEY PLOT POINTS (MUST INCLUDE):\n"
+            for event in request.timeline:
+                timeline_structure += f"- Chapter {event.chapter if event.chapter else 'TBD'}: {event.description}"
+                if event.mood:
+                    timeline_structure += f" [Mood: {event.mood}]"
+                timeline_structure += "\n"
+        
         # STEP 1: Generate outline using Llama 70B
         outline_prompt = f"""Create a detailed story outline for:
 
@@ -67,16 +92,21 @@ GENRE: {request.genre.value if request.genre else 'dark comedy/thriller'}
 SETTING: {request.setting or 'Choose atmospheric, engaging setting'}
 {f'THEMES: {", ".join(request.themes)}' if request.themes else ''}
 {f'EMULATE: {request.emulate_author}' if request.emulate_author else ''}
+{character_details}
+{timeline_structure}
 
 Generate a JSON outline with:
 {{
   "title": "compelling title",
   "chapters": [
-    {{"number": 1, "title": "chapter title", "synopsis": "what happens", "word_count": 3000}}
+    {{"number": 1, "title": "chapter title", "synopsis": "what happens", "key_events": ["from timeline if applicable"], "word_count": 8000}}
   ],
-  "characters": ["main characters"],
+  "character_arcs": {{"character_name": "their journey"}},
   "themes": ["core themes"]
 }}
+
+CRITICAL: If timeline events are provided with chapter numbers, PLACE THEM IN THOSE EXACT CHAPTERS.
+If no chapter number, distribute timeline events logically across the story.
 
 Make it {request.tone or 'darkly humorous, suspenseful, and engaging'}."""
         
@@ -87,9 +117,10 @@ Make it {request.tone or 'darkly humorous, suspenseful, and engaging'}."""
             outline = json.loads(outline_text)
         except:
             # Fallback if JSON parsing fails
+            num_chapters = 2 if request.story_length == FictionLength.SAMPLE else 12
             outline = {
                 "title": request.title or "Untitled Story",
-                "chapters": [{"number": 1, "title": "Chapter 1", "synopsis": request.premise, "word_count": target_words}],
+                "chapters": [{"number": i+1, "title": f"Chapter {i+1}", "synopsis": request.premise, "word_count": target_words//num_chapters} for i in range(num_chapters)],
                 "themes": request.themes or []
             }
         
@@ -105,20 +136,36 @@ Make it {request.tone or 'darkly humorous, suspenseful, and engaging'}."""
             
             words_per_chapter = target_words // max_chapters
             
+            # Include timeline events for this chapter
+            chapter_events = ""
+            if request.timeline:
+                relevant_events = [e for e in request.timeline if e.chapter == chapter_spec.get('number')]
+                if relevant_events:
+                    chapter_events = "\n\nKEY EVENTS TO INCLUDE IN THIS CHAPTER:\n"
+                    for event in relevant_events:
+                        chapter_events += f"- {event.description}"
+                        if event.mood:
+                            chapter_events += f" [Mood: {event.mood}]"
+                        chapter_events += "\n"
+            
             chapter_prompt = f"""Write Chapter {chapter_spec.get('number', i+1)}: {chapter_spec.get('title', f'Chapter {i+1}')}
 
 SYNOPSIS: {chapter_spec.get('synopsis', '')}
 
 PREVIOUS CONTEXT: {context[-2000:] if context else 'This is the beginning'}
 
+{character_details if character_details else ''}
+{chapter_events if chapter_events else ''}
+
 WRITING REQUIREMENTS:
 - Target: {words_per_chapter} words
 - Style: {request.style.value if request.style else 'sarcastic_deadpan'} - witty, dark humor, sharp observations
 - Tone: {request.tone or 'Suspenseful yet darkly funny'}
 - Show don't tell
-- Sharp dialogue
+- Sharp dialogue featuring the established characters
 - Vivid descriptions
 - Keep reader hooked
+- MUST include all key events listed above if any
 
 Write the full chapter now:"""
             
@@ -201,7 +248,6 @@ def generate_biography_story(request: BiographyRequest, user: User, db: Session)
     # Create story record
     story = Story(
         user_id=user.id,
-        user_email=user.email,
         story_type="biography",
         title=f"The Life of {request.subject_names}",
         length_type=request.story_length.value,
@@ -248,7 +294,7 @@ TONE: {request.tone or 'balanced, respectful, engaging'}
 WRITING STYLE: {request.writing_style or 'chronological'}
 
 DETAILS PROVIDED:
-{'\n'.join(details) if details else 'Limited information - create plausible, historically accurate details based on context'}
+{chr(10).join(details) if details else 'Limited information - create plausible, historically accurate details based on context'}
 
 {f'FOCUS AREAS: {", ".join(request.focus_areas)}' if request.focus_areas else ''}
 {f'THEMES: {", ".join(request.themes)}' if request.themes else ''}
