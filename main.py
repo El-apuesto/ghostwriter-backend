@@ -32,10 +32,10 @@ from webhooks import handle_stripe_webhook
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Database setup
+# Database setup - Updated for psycopg3
 engine = create_engine(
-    settings.database_url,
-    connect_args={"check_same_thread": False} if "sqlite" in settings.database_url else {}
+    settings.database_url.replace('postgres://', 'postgresql://').replace('postgresql://', 'postgresql+psycopg://'),
+    pool_pre_ping=True
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base.metadata.create_all(bind=engine)
