@@ -134,6 +134,7 @@ def admin_grant_credits(
     
     user.credits_balance = credits
     db.commit()
+    db.refresh(user)  # Refresh to get committed value
     
     return {
         "success": True,
@@ -180,6 +181,7 @@ def login(credentials: UserLogin, db: Session = Depends(get_db)):
     
     user.last_login = datetime.utcnow()
     db.commit()
+    db.refresh(user)  # FIXED: Refresh user to get latest credits from DB
     
     token = create_access_token({"user_id": user.id, "email": user.email})
     
@@ -199,6 +201,7 @@ def get_profile(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    db.refresh(current_user)  # FIXED: Refresh to get latest credits
     return current_user
 
 # ===== CREDITS =====
@@ -246,7 +249,8 @@ def purchase_credits(
         raise HTTPException(500, f"Payment failed: {str(e)}")
 
 @app.get("/api/credits/balance")
-def get_balance(current_user: User = Depends(get_current_user)):
+def get_balance(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    db.refresh(current_user)  # FIXED: Refresh to get latest credits
     return {
         "credits_balance": current_user.credits_balance,
         "total_purchased": current_user.total_credits_purchased,
