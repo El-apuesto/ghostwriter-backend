@@ -6,6 +6,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from config import settings
 from models import User
+from database import get_db  # ✅ Import from centralized database
 
 security = HTTPBearer()
 
@@ -41,7 +42,11 @@ def verify_token(token: str) -> dict:
             detail="Could not validate credentials"
         )
 
-def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = None) -> User:
+# ✅ FIX: Changed db: Session = None to db: Session = Depends(get_db)
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db)  # ✅ This was the bug!
+) -> User:
     """Get current authenticated user from JWT token"""
     token = credentials.credentials
     payload = verify_token(token)
