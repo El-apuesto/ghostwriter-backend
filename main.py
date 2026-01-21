@@ -112,6 +112,29 @@ def health_check():
         "model": "Llama 3.3 70B"
     }
 
+# ===== TEMPORARY DEBUG ENDPOINT =====
+@app.get("/api/admin/check-credits")
+def check_credits(
+    email: str = Query(..., description="User email"),
+    secret: str = Query(..., description="Admin secret key"),
+    db: Session = Depends(get_db)
+):
+    """Debug endpoint to check user credits directly from database"""
+    if secret != "ghostwriter2026":
+        raise HTTPException(403, "Invalid secret key")
+    
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        raise HTTPException(404, f"User {email} not found")
+    
+    return {
+        "email": user.email,
+        "credits_balance": user.credits_balance,
+        "total_purchased": user.total_credits_purchased,
+        "total_spent": user.total_credits_spent,
+        "last_login": user.last_login
+    }
+
 # ===== TEMPORARY ADMIN ENDPOINT - DELETE AFTER USE =====
 @app.get("/api/admin/grant-credits")
 def admin_grant_credits(
