@@ -112,6 +112,35 @@ def health_check():
         "model": "Llama 3.3 70B"
     }
 
+# ===== TEMPORARY ADMIN ENDPOINT - DELETE AFTER USE =====
+@app.get("/api/admin/grant-credits")
+def admin_grant_credits(
+    email: str = Query(..., description="User email"),
+    credits: int = Query(999999, description="Credits to grant"),
+    secret: str = Query(..., description="Admin secret key"),
+    db: Session = Depends(get_db)
+):
+    """
+    TEMPORARY ADMIN ENDPOINT - DELETE AFTER GRANTING YOURSELF CREDITS
+    Visit: https://your-backend-url.onrender.com/api/admin/grant-credits?email=your@email.com&credits=999999&secret=ghostwriter2026
+    """
+    # Secret key check
+    if secret != "ghostwriter2026":
+        raise HTTPException(403, "Invalid secret key")
+    
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        raise HTTPException(404, f"User {email} not found")
+    
+    user.credits_balance = credits
+    db.commit()
+    
+    return {
+        "success": True,
+        "message": f"Granted {credits} credits to {email}",
+        "new_balance": user.credits_balance
+    }
+
 # ===== AUTHENTICATION =====
 
 @app.post("/api/auth/signup", response_model=TokenResponse)
