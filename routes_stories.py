@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List
 import json
 
+from database import get_db  # ✅ FIX: Import from database.py instead of main_new
 from auth import get_current_user
 from models import User, Story
 from schemas import (
@@ -12,14 +13,6 @@ from schemas import (
 from story_generation import generate_fiction_story, generate_biography_story
 
 router = APIRouter()
-
-def get_db():
-    from main_new import SessionLocal
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 # ===== STORY GENERATION ENDPOINTS =====
 
