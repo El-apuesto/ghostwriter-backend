@@ -5,12 +5,15 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "sqlite:///./ghostwriter.db"
     
-    # LLM Configuration
+    # LLM Configuration (Text Generation)
     llm_provider: str = "groq"  # "ollama" or "groq"
     ollama_base_url: str = "http://localhost:11434"
     groq_api_key: Optional[str] = None
     
-    # Model Selection (Groq models)
+    # Image Generation (xAI Grok for covers)
+    xai_api_key: Optional[str] = None  # Used ONLY for AI cover generation
+    
+    # Model Selection (Groq models for text)
     creative_model: str = "llama-3.3-70b-versatile"      # For creative fiction
     structured_model: str = "llama-3.3-70b-versatile"    # For outlines/structure
     dialogue_model: str = "llama-3.3-70b-versatile"      # For dialogue
