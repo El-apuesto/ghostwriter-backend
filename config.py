@@ -11,11 +11,11 @@ class Settings(BaseSettings):
     groq_api_key: Optional[str] = None
     xai_api_key: Optional[str] = None
     
-    # Model Selection
-    creative_model: str = "grok-4"           # For creative fiction
-    structured_model: str = "grok-4"         # For outlines/structure
-    dialogue_model: str = "grok-4"           # For dialogue
-    biography_model: str = "grok-4"          # For biographies
+    # Model Selection (grok-beta is the correct name for xAI API)
+    creative_model: str = "grok-beta"           # For creative fiction
+    structured_model: str = "grok-beta"         # For outlines/structure
+    dialogue_model: str = "grok-beta"           # For dialogue
+    biography_model: str = "grok-beta"          # For biographies
     
     # Authentication
     jwt_secret_key: str = "your-super-secret-jwt-key-change-in-production"
