@@ -6,16 +6,15 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./ghostwriter.db"
     
     # LLM Configuration
-    llm_provider: str = "ollama"  # or "groq" or "xai"
+    llm_provider: str = "groq"  # "ollama" or "groq"
     ollama_base_url: str = "http://localhost:11434"
     groq_api_key: Optional[str] = None
-    xai_api_key: Optional[str] = None
     
-    # Model Selection (grok-beta is the correct name for xAI API)
-    creative_model: str = "grok-beta"           # For creative fiction
-    structured_model: str = "grok-beta"         # For outlines/structure
-    dialogue_model: str = "grok-beta"           # For dialogue
-    biography_model: str = "grok-beta"          # For biographies
+    # Model Selection (Groq models)
+    creative_model: str = "llama-3.3-70b-versatile"      # For creative fiction
+    structured_model: str = "llama-3.3-70b-versatile"    # For outlines/structure
+    dialogue_model: str = "llama-3.3-70b-versatile"      # For dialogue
+    biography_model: str = "llama-3.3-70b-versatile"     # For biographies
     
     # Authentication
     jwt_secret_key: str = "your-super-secret-jwt-key-change-in-production"
