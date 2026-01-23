@@ -34,7 +34,7 @@ def generate_fiction_story(request: FictionRequest, user: User, db: Session) -> 
     
     logger.info(f"Generating {request.story_length.value}: {request.premise[:50]}...")
     
-    # Create story record
+    # Create story record IMMEDIATELY and commit
     story = Story(
         user_id=user.id,
         story_type="fiction",
@@ -53,8 +53,12 @@ def generate_fiction_story(request: FictionRequest, user: User, db: Session) -> 
         })
     )
     db.add(story)
-    db.commit()
+    db.flush()  # Get the ID
+    db.commit()  # ENSURE IT'S SAVED
     db.refresh(story)
+    
+    story_id = story.id  # Save the ID
+    logger.info(f"Story record created with ID: {story_id}")
     
     try:
         # Build character descriptions
@@ -76,7 +80,7 @@ def generate_fiction_story(request: FictionRequest, user: User, db: Session) -> 
         if request.timeline:
             timeline_structure = "\n\nKEY PLOT POINTS (MUST INCLUDE):\n"
             for event in request.timeline:
-                timeline_structure += f"- Chapter {event.chapter if event.chapter else 'TBD'}: {event.description}"
+                timeline_structure += f"- Chapter {event.chapter if event.chapter else 'TBD'}: {event.event}"
                 if event.mood:
                     timeline_structure += f" [Mood: {event.mood}]"
                 timeline_structure += "\n"
@@ -143,7 +147,7 @@ Make it {request.tone or 'darkly humorous, suspenseful, and engaging'}."""
                 if relevant_events:
                     chapter_events = "\n\nKEY EVENTS TO INCLUDE IN THIS CHAPTER:\n"
                     for event in relevant_events:
-                        chapter_events += f"- {event.description}"
+                        chapter_events += f"- {event.event}"
                         if event.mood:
                             chapter_events += f" [Mood: {event.mood}]"
                         chapter_events += "\n"
@@ -200,8 +204,9 @@ Write the full chapter now:"""
             )
             db.add(transaction)
         
-        db.commit()
+        db.commit()  # FINAL COMMIT
         db.refresh(story)
+        logger.info(f"Story {story_id} completed and saved")
         
         # Calculate word count
         word_count = sum(len(ch['content'].split()) for ch in chapters)
@@ -215,9 +220,14 @@ Write the full chapter now:"""
         }
         
     except Exception as e:
-        logger.error(f"Fiction generation failed: {str(e)}")
+        logger.error(f"Fiction generation failed for story {story_id}: {str(e)}")
+        # Update story status to error
         story.generation_status = "error"
-        db.commit()
+        story.metadata = json.dumps({
+            **json.loads(story.metadata),
+            "error": str(e)
+        })
+        db.commit()  # SAVE ERROR STATE
         raise Exception(f"Story generation failed: {str(e)}")
 
 
@@ -245,7 +255,7 @@ def generate_biography_story(request: BiographyRequest, user: User, db: Session)
     
     logger.info(f"Generating {request.story_length.value}: {request.subject_names}")
     
-    # Create story record
+    # Create story record IMMEDIATELY and commit
     story = Story(
         user_id=user.id,
         story_type="biography",
@@ -261,8 +271,12 @@ def generate_biography_story(request: BiographyRequest, user: User, db: Session)
         })
     )
     db.add(story)
-    db.commit()
+    db.flush()
+    db.commit()  # ENSURE IT'S SAVED
     db.refresh(story)
+    
+    story_id = story.id
+    logger.info(f"Biography record created with ID: {story_id}")
     
     try:
         # Build detailed biography prompt
@@ -332,8 +346,9 @@ Write the complete {request.biography_type.value} now:"""
             )
             db.add(transaction)
         
-        db.commit()
+        db.commit()  # FINAL COMMIT
         db.refresh(story)
+        logger.info(f"Biography {story_id} completed and saved")
         
         word_count = len(content.split())
         
@@ -346,7 +361,12 @@ Write the complete {request.biography_type.value} now:"""
         }
         
     except Exception as e:
-        logger.error(f"Biography generation failed: {str(e)}")
+        logger.error(f"Biography generation failed for story {story_id}: {str(e)}")
+        # Update story status to error
         story.generation_status = "error"
-        db.commit()
+        story.metadata = json.dumps({
+            **json.loads(story.metadata),
+            "error": str(e)
+        })
+        db.commit()  # SAVE ERROR STATE
         raise Exception(f"Biography generation failed: {str(e)}")
