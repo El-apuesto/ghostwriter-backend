@@ -7,6 +7,7 @@ from typing import List
 import stripe
 from fastapi import FastAPI, HTTPException, Depends, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy import create_engine, desc
 from sqlalchemy.orm import sessionmaker, Session
 
@@ -279,9 +280,12 @@ def create_fiction(
     db: Session = Depends(get_db)
 ):
     try:
+        logger.info(f"Fiction generation started for user {current_user.email}")
         result = generate_fiction_story(request, current_user, db)
+        logger.info(f"Fiction generation completed. Story ID: {result['story_id']}")
         
-        return {
+        # Build response dict explicitly
+        response_data = {
             "success": True,
             "story": {
                 "id": result["story_id"],
@@ -291,6 +295,7 @@ def create_fiction(
                 "content": result["chapters"],
                 "word_count": result["word_count"],
                 "credits_cost": result["credits_used"],
+                "created_at": datetime.utcnow().isoformat(),
                 "metadata": {
                     "premise": request.premise,
                     "style": request.style.value if request.style else "sarcastic_deadpan",
@@ -301,10 +306,15 @@ def create_fiction(
                     "timeline": [t.dict() for t in request.timeline] if request.timeline else []
                 }
             },
-            "message": f"Your {request.story_length.value} has been summoned!",
+            "message": f"Your {request.story_length.value} has been generated!",
             "credits_remaining": current_user.credits_balance
         }
+        
+        logger.info(f"Returning response with story ID: {response_data['story']['id']}")
+        return JSONResponse(content=response_data, status_code=200)
+        
     except Exception as e:
+        logger.error(f"Fiction generation failed: {str(e)}")
         raise HTTPException(500, str(e))
 
 @app.post("/api/generate/biography")
@@ -314,9 +324,11 @@ def create_biography(
     db: Session = Depends(get_db)
 ):
     try:
+        logger.info(f"Biography generation started for user {current_user.email}")
         result = generate_biography_story(request, current_user, db)
+        logger.info(f"Biography generation completed. Story ID: {result['story_id']}")
         
-        return {
+        response_data = {
             "success": True,
             "story": {
                 "id": result["story_id"],
@@ -326,6 +338,7 @@ def create_biography(
                 "content": result["content"],
                 "word_count": result["word_count"],
                 "credits_cost": result["credits_used"],
+                "created_at": datetime.utcnow().isoformat(),
                 "metadata": {
                     "subject": request.subject_names,
                     "type": request.biography_type.value,
@@ -336,7 +349,12 @@ def create_biography(
             "message": f"Life story of {request.subject_names} is ready!",
             "credits_remaining": current_user.credits_balance
         }
+        
+        logger.info(f"Returning response with story ID: {response_data['story']['id']}")
+        return JSONResponse(content=response_data, status_code=200)
+        
     except Exception as e:
+        logger.error(f"Biography generation failed: {str(e)}")
         raise HTTPException(500, str(e))
 
 @app.get("/api/stories")
