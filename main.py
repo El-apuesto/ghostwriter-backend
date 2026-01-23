@@ -301,9 +301,29 @@ def create_fiction(
 ):
     try:
         result = generate_fiction_story(request, current_user, db)
+        
+        # FIXED: Return full story data to prevent 404 race condition
+        # Frontend no longer needs to fetch by ID immediately
         return {
             "success": True,
-            "story": result,
+            "story": {
+                "id": result["story_id"],
+                "title": result["title"],
+                "story_type": "fiction",
+                "length_type": request.story_length.value,
+                "content": result["chapters"],
+                "word_count": result["word_count"],
+                "credits_cost": result["credits_used"],
+                "metadata": {
+                    "premise": request.premise,
+                    "style": request.style.value if request.style else "sarcastic_deadpan",
+                    "genre": request.genre.value if request.genre else None,
+                    "setting": request.setting,
+                    "themes": request.themes,
+                    "characters": [c.dict() for c in request.characters] if request.characters else [],
+                    "timeline": [t.dict() for t in request.timeline] if request.timeline else []
+                }
+            },
             "message": f"Your {request.story_length.value} has been summoned!",
             "credits_remaining": current_user.credits_balance
         }
@@ -318,9 +338,25 @@ def create_biography(
 ):
     try:
         result = generate_biography_story(request, current_user, db)
+        
+        # FIXED: Return full story data to prevent 404 race condition
         return {
             "success": True,
-            "story": result,
+            "story": {
+                "id": result["story_id"],
+                "title": result["title"],
+                "story_type": "biography",
+                "length_type": request.story_length.value,
+                "content": result["content"],
+                "word_count": result["word_count"],
+                "credits_cost": result["credits_used"],
+                "metadata": {
+                    "subject": request.subject_names,
+                    "type": request.biography_type.value,
+                    "time_period": f"{request.time_period_start} - {request.time_period_end}",
+                    "narrative_voice": request.narrative_voice.value if request.narrative_voice else "third_person_limited"
+                }
+            },
             "message": f"Life story of {request.subject_names} is ready!",
             "credits_remaining": current_user.credits_balance
         }
