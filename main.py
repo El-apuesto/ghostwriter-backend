@@ -28,11 +28,9 @@ from extras_generation import (
 )
 from webhooks import handle_stripe_webhook
 
-# Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Database setup - Updated for psycopg3
 engine = create_engine(
     settings.database_url.replace('postgres://', 'postgresql://').replace('postgresql://', 'postgresql+psycopg://'),
     pool_pre_ping=True
@@ -40,10 +38,8 @@ engine = create_engine(
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base.metadata.create_all(bind=engine)
 
-# Stripe setup
 stripe.api_key = settings.stripe_secret_key
 
-# FastAPI app
 app = FastAPI(
     title="GhostWriter API v2",
     description="AI-powered story generator with credit system and Llama 70B",
@@ -65,7 +61,6 @@ def get_db():
     finally:
         db.close()
 
-# Initialize credit packs in database
 @app.on_event("startup")
 def init_credit_packs():
     db = SessionLocal()
@@ -85,12 +80,10 @@ def init_credit_packs():
     finally:
         db.close()
 
-# ===== ROOT & HEALTH =====
-
 @app.get("/")
 def root():
     return {
-        "message": "👻 GhostWriter API v2 - Credit System with Llama 70B",
+        "message": "GhostWriter API v2 - Credit System with Llama 70B",
         "version": "2.0.0",
         "features": [
             "User authentication",
@@ -112,14 +105,12 @@ def health_check():
         "model": "Llama 3.3 70B"
     }
 
-# ===== TEMPORARY DEBUG ENDPOINT =====
 @app.get("/api/admin/check-credits")
 def check_credits(
     email: str = Query(..., description="User email"),
     secret: str = Query(..., description="Admin secret key"),
     db: Session = Depends(get_db)
 ):
-    """Debug endpoint to check user credits directly from database"""
     if secret != "ghostwriter2026":
         raise HTTPException(403, "Invalid secret key")
     
@@ -135,7 +126,6 @@ def check_credits(
         "last_login": user.last_login
     }
 
-# ===== TEMPORARY ADMIN ENDPOINT - DELETE AFTER USE =====
 @app.get("/api/admin/grant-credits")
 def admin_grant_credits(
     email: str = Query(..., description="User email"),
@@ -143,11 +133,6 @@ def admin_grant_credits(
     secret: str = Query(..., description="Admin secret key"),
     db: Session = Depends(get_db)
 ):
-    """
-    TEMPORARY ADMIN ENDPOINT - DELETE AFTER GRANTING YOURSELF CREDITS
-    Visit: https://your-backend-url.onrender.com/api/admin/grant-credits?email=your@email.com&credits=999999&secret=ghostwriter2026
-    """
-    # Secret key check
     if secret != "ghostwriter2026":
         raise HTTPException(403, "Invalid secret key")
     
@@ -157,15 +142,13 @@ def admin_grant_credits(
     
     user.credits_balance = credits
     db.commit()
-    db.refresh(user)  # Refresh to get committed value
+    db.refresh(user)
     
     return {
         "success": True,
         "message": f"Granted {credits} credits to {email}",
         "new_balance": user.credits_balance
     }
-
-# ===== AUTHENTICATION =====
 
 @app.post("/api/auth/signup", response_model=TokenResponse)
 def signup(user_data: UserSignup, db: Session = Depends(get_db)):
@@ -204,7 +187,7 @@ def login(credentials: UserLogin, db: Session = Depends(get_db)):
     
     user.last_login = datetime.utcnow()
     db.commit()
-    db.refresh(user)  # FIXED: Refresh user to get latest credits from DB
+    db.refresh(user)
     
     token = create_access_token({"user_id": user.id, "email": user.email})
     
@@ -224,10 +207,8 @@ def get_profile(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    db.refresh(current_user)  # FIXED: Refresh to get latest credits
+    db.refresh(current_user)
     return current_user
-
-# ===== CREDITS =====
 
 @app.get("/api/credits/packs")
 def get_credit_packs(db: Session = Depends(get_db)):
@@ -273,7 +254,7 @@ def purchase_credits(
 
 @app.get("/api/credits/balance")
 def get_balance(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    db.refresh(current_user)  # FIXED: Refresh to get latest credits
+    db.refresh(current_user)
     return {
         "credits_balance": current_user.credits_balance,
         "total_purchased": current_user.total_credits_purchased,
@@ -291,8 +272,6 @@ def get_transactions(
     ).order_by(desc(Transaction.created_at)).limit(limit).all()
     return transactions
 
-# ===== STORY GENERATION =====
-
 @app.post("/api/generate/fiction")
 def create_fiction(
     request: FictionRequest,
@@ -302,8 +281,6 @@ def create_fiction(
     try:
         result = generate_fiction_story(request, current_user, db)
         
-        # FIXED: Return full story data to prevent 404 race condition
-        # Frontend no longer needs to fetch by ID immediately
         return {
             "success": True,
             "story": {
@@ -339,7 +316,6 @@ def create_biography(
     try:
         result = generate_biography_story(request, current_user, db)
         
-        # FIXED: Return full story data to prevent 404 race condition
         return {
             "success": True,
             "story": {
@@ -362,8 +338,6 @@ def create_biography(
         }
     except Exception as e:
         raise HTTPException(500, str(e))
-
-# ===== STORY LIBRARY =====
 
 @app.get("/api/stories")
 def get_my_stories(
@@ -391,7 +365,6 @@ def get_story(
     if not story:
         raise HTTPException(404, "Story not found")
     
-    # Parse content
     content = json.loads(story.content) if story.story_type == "fiction" else story.content
     metadata = json.loads(story.metadata) if story.metadata else {}
     
@@ -432,8 +405,6 @@ def delete_story(
     db.commit()
     return {"success": True}
 
-# ===== EXTRAS (COVERS, EXPORTS, MARKETING) =====
-
 @app.post("/api/extras/cover")
 def create_cover(
     story_id: int = Query(..., description="Story ID"),
@@ -443,11 +414,6 @@ def create_cover(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """
-    Generate book cover:
-    - FREE: Basic cover with professional design (0 credits)
-    - PREMIUM: 4 AI-generated options to choose from (10 credits)
-    """
     try:
         result = generate_book_cover(story_id, cover_type, current_user, db, premium=premium, style=style)
         return result
@@ -513,8 +479,6 @@ def create_author_bio(
         return result
     except Exception as e:
         raise HTTPException(500, str(e))
-
-# ===== STRIPE WEBHOOK =====
 
 @app.post("/api/webhook")
 async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
