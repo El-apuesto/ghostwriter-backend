@@ -4,6 +4,7 @@ Replace your entire main.py with this file
 """
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from story_routes import router as story_router
 
 # Create app
 app = FastAPI(title="Ghostwriter API", version="1.0.0")
