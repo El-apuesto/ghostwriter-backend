@@ -1,372 +1,162 @@
-import json
-import logging
+"""
+Story generation module with proper database commit handling
+"""
+import os
 from datetime import datetime
-from typing import Dict
-from sqlalchemy.orm import Session
+from anthropic import Anthropic
 
-from config import settings, CREDIT_COSTS
-from models import User, Story, Transaction
-from schemas import FictionRequest, BiographyRequest, FictionLength, BiographyLength
-from llm_client import llm, GHOSTWRITER_FICTION, GHOSTWRITER_BIOGRAPHY
-
-logger = logging.getLogger(__name__)
-
-# ===== FICTION GENERATION =====
-
-def generate_fiction_story(request: FictionRequest, user: User, db: Session) -> Dict:
-    """Generate fiction story with credit check"""
+def generate_story(db, story_id, genre, theme, characters=None, setting=None, length='short'):
+    """
+    Generate a story using Claude AI with immediate database commit
     
-    # Determine credit cost
-    cost_key = f"fiction_{request.story_length.value}"
-    credit_cost = CREDIT_COSTS.get(cost_key, 0)
-    
-    # Check if user has enough credits (skip for free samples)
-    if credit_cost > 0 and user.credits_balance < credit_cost:
-        raise Exception(f"Insufficient credits. Need {credit_cost}, have {user.credits_balance}")
-    
-    # Word count targets
-    word_counts = {
-        FictionLength.SAMPLE: 1500,
-        FictionLength.NOVELLA: 30000,
-        FictionLength.NOVEL: 100000
-    }
-    target_words = word_counts[request.story_length]
-    
-    logger.info(f"Generating {request.story_length.value}: {request.premise[:50]}...")
-    
-    # Create story record IMMEDIATELY and commit
-    story = Story(
-        user_id=user.id,
-        story_type="fiction",
-        title=request.title or "Untitled Story",
-        length_type=request.story_length.value,
-        generation_status="generating",
-        credits_cost=credit_cost,
-        metadata=json.dumps({
-            "premise": request.premise,
-            "style": request.style.value if request.style else "sarcastic_deadpan",
-            "genre": request.genre.value if request.genre else None,
-            "setting": request.setting,
-            "themes": request.themes,
-            "characters": [c.dict() for c in request.characters] if request.characters else [],
-            "timeline": [t.dict() for t in request.timeline] if request.timeline else []
-        })
-    )
-    db.add(story)
-    db.flush()  # Get the ID
-    db.commit()  # ENSURE IT'S SAVED
-    db.refresh(story)
-    
-    story_id = story.id  # Save the ID
-    logger.info(f"Story record created with ID: {story_id}")
-    
+    Args:
+        db: Database session/connection
+        story_id: ID of the story record
+        genre: Story genre
+        theme: Story theme
+        characters: Optional character descriptions
+        setting: Optional setting description
+        length: Story length (short, medium, long)
+    """
     try:
-        # Build character descriptions
-        character_details = ""
-        if request.characters:
-            character_details = "\n\nCHARACTERS:\n"
-            for char in request.characters:
-                character_details += f"- {char.name}"
-                if char.role:
-                    character_details += f" ({char.role})"
-                if char.description:
-                    character_details += f": {char.description}"
-                if char.quirks:
-                    character_details += f" | Quirks: {', '.join(char.quirks)}"
-                character_details += "\n"
+        # Get the story record
+        from models import Story  # Adjust import based on your structure
+        story = db.query(Story).filter(Story.id == story_id).first()
         
-        # Build timeline structure
-        timeline_structure = ""
-        if request.timeline:
-            timeline_structure = "\n\nKEY PLOT POINTS (MUST INCLUDE):\n"
-            for event in request.timeline:
-                timeline_structure += f"- Chapter {event.chapter if event.chapter else 'TBD'}: {event.event}"
-                if event.mood:
-                    timeline_structure += f" [Mood: {event.mood}]"
-                timeline_structure += "\n"
+        if not story:
+            raise ValueError(f"Story with ID {story_id} not found")
         
-        # STEP 1: Generate outline using Llama 70B
-        outline_prompt = f"""Create a detailed story outline for:
-
-PREMISE: {request.premise}
-
-TARGET LENGTH: {target_words} words
-WRITING STYLE: {request.style.value if request.style else 'sarcastic_deadpan'}
-GENRE: {request.genre.value if request.genre else 'dark comedy/thriller'}
-SETTING: {request.setting or 'Choose atmospheric, engaging setting'}
-{f'THEMES: {", ".join(request.themes)}' if request.themes else ''}
-{f'EMULATE: {request.emulate_author}' if request.emulate_author else ''}
-{character_details}
-{timeline_structure}
-
-Generate a JSON outline with:
-{{
-  "title": "compelling title",
-  "chapters": [
-    {{"number": 1, "title": "chapter title", "synopsis": "what happens", "key_events": ["from timeline if applicable"], "word_count": 8000}}
-  ],
-  "character_arcs": {{"character_name": "their journey"}},
-  "themes": ["core themes"]
-}}
-
-CRITICAL: If timeline events are provided with chapter numbers, PLACE THEM IN THOSE EXACT CHAPTERS.
-If no chapter number, distribute timeline events logically across the story.
-
-Make it {request.tone or 'darkly humorous, suspenseful, and engaging'}."""
+        # Update status to generating and commit immediately
+        story.status = 'generating'
+        db.commit()  # CRITICAL FIX: Commit immediately so frontend can find the record
+        db.refresh(story)
         
-        outline_text = llm.generate(outline_prompt, GHOSTWRITER_FICTION, "llama-3.3-70b-versatile")
+        print(f"Starting story generation for ID: {story_id}")
         
-        # Parse outline
+        # Prepare the prompt
+        prompt = build_story_prompt(genre, theme, characters, setting, length)
+        
+        # Initialize Anthropic client
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise ValueError("ANTHROPIC_API_KEY environment variable not set")
+        
+        client = Anthropic(api_key=api_key)
+        
+        # Generate the story
+        print("Calling Claude API...")
+        response = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=4096,
+            messages=[{
+                "role": "user",
+                "content": prompt
+            }]
+        )
+        
+        # Extract the story content
+        story_content = response.content[0].text
+        
+        # Update the story record with content
+        story.content = story_content
+        story.status = 'completed'
+        story.updated_at = datetime.utcnow()
+        db.commit()  # Commit the completed story
+        db.refresh(story)
+        
+        print(f"Story generation completed for ID: {story_id}")
+        return story
+        
+    except Exception as e:
+        print(f"Error generating story: {str(e)}")
+        
+        # Update story status to failed
         try:
-            outline = json.loads(outline_text)
-        except:
-            # Fallback if JSON parsing fails
-            num_chapters = 2 if request.story_length == FictionLength.SAMPLE else 12
-            outline = {
-                "title": request.title or "Untitled Story",
-                "chapters": [{"number": i+1, "title": f"Chapter {i+1}", "synopsis": request.premise, "word_count": target_words//num_chapters} for i in range(num_chapters)],
-                "themes": request.themes or []
-            }
+            story = db.query(Story).filter(Story.id == story_id).first()
+            if story:
+                story.status = 'failed'
+                story.error_message = str(e)
+                db.commit()
+        except Exception as db_error:
+            print(f"Error updating story status: {str(db_error)}")
+            db.rollback()
         
-        story.title = outline.get("title", request.title or "Untitled Story")
-        
-        # STEP 2: Generate chapters
-        max_chapters = 2 if request.story_length == FictionLength.SAMPLE else len(outline.get("chapters", []))
-        chapters = []
-        context = ""
-        
-        for i, chapter_spec in enumerate(outline.get("chapters", [])[:max_chapters]):
-            logger.info(f"Generating chapter {i+1}/{max_chapters}")
-            
-            words_per_chapter = target_words // max_chapters
-            
-            # Include timeline events for this chapter
-            chapter_events = ""
-            if request.timeline:
-                relevant_events = [e for e in request.timeline if e.chapter == chapter_spec.get('number')]
-                if relevant_events:
-                    chapter_events = "\n\nKEY EVENTS TO INCLUDE IN THIS CHAPTER:\n"
-                    for event in relevant_events:
-                        chapter_events += f"- {event.event}"
-                        if event.mood:
-                            chapter_events += f" [Mood: {event.mood}]"
-                        chapter_events += "\n"
-            
-            chapter_prompt = f"""Write Chapter {chapter_spec.get('number', i+1)}: {chapter_spec.get('title', f'Chapter {i+1}')}
-
-SYNOPSIS: {chapter_spec.get('synopsis', '')}
-
-PREVIOUS CONTEXT: {context[-2000:] if context else 'This is the beginning'}
-
-{character_details if character_details else ''}
-{chapter_events if chapter_events else ''}
-
-WRITING REQUIREMENTS:
-- Target: {words_per_chapter} words
-- Style: {request.style.value if request.style else 'sarcastic_deadpan'} - witty, dark humor, sharp observations
-- Tone: {request.tone or 'Suspenseful yet darkly funny'}
-- Show don't tell
-- Sharp dialogue featuring the established characters
-- Vivid descriptions
-- Keep reader hooked
-- MUST include all key events listed above if any
-
-Write the full chapter now:"""
-            
-            chapter_content = llm.generate(chapter_prompt, GHOSTWRITER_FICTION, "llama-3.3-70b-versatile")
-            
-            chapters.append({
-                "number": i + 1,
-                "title": chapter_spec.get('title', f'Chapter {i+1}'),
-                "content": chapter_content
-            })
-            
-            context = chapter_content  # Use for next chapter
-        
-        # STEP 3: Save completed story
-        story.content = json.dumps(chapters)
-        story.generation_status = "complete"
-        story.completed_at = datetime.utcnow()
-        
-        # Deduct credits (if not free sample)
-        if credit_cost > 0:
-            if not user.deduct_credits(credit_cost):
-                raise Exception("Credit deduction failed")
-            
-            # Log transaction
-            transaction = Transaction(
-                user_id=user.id,
-                transaction_type="story_generation",
-                credits_amount=-credit_cost,
-                description=f"Generated {request.story_length.value} fiction story",
-                status="completed",
-                story_id=story.id
-            )
-            db.add(transaction)
-        
-        db.commit()  # FINAL COMMIT
-        db.refresh(story)
-        logger.info(f"Story {story_id} completed and saved")
-        
-        # Calculate word count
-        word_count = sum(len(ch['content'].split()) for ch in chapters)
-        
-        return {
-            "story_id": story.id,
-            "title": story.title,
-            "chapters": chapters,
-            "word_count": word_count,
-            "credits_used": credit_cost
-        }
-        
-    except Exception as e:
-        logger.error(f"Fiction generation failed for story {story_id}: {str(e)}")
-        # Update story status to error
-        story.generation_status = "error"
-        story.metadata = json.dumps({
-            **json.loads(story.metadata),
-            "error": str(e)
-        })
-        db.commit()  # SAVE ERROR STATE
-        raise Exception(f"Story generation failed: {str(e)}")
+        raise
 
 
-# ===== BIOGRAPHY GENERATION =====
-
-def generate_biography_story(request: BiographyRequest, user: User, db: Session) -> Dict:
-    """Generate biography with credit check"""
-    
-    # Determine credit cost
-    cost_key = f"biography_{request.story_length.value}"
-    credit_cost = CREDIT_COSTS.get(cost_key, 0)
-    
-    # Check credits
-    if credit_cost > 0 and user.credits_balance < credit_cost:
-        raise Exception(f"Insufficient credits. Need {credit_cost}, have {user.credits_balance}")
-    
-    # Word count targets
-    word_counts = {
-        BiographyLength.SAMPLE: 2000,
-        BiographyLength.SHORT_MEMOIR: 15000,
-        BiographyLength.STANDARD_BIOGRAPHY: 40000,
-        BiographyLength.COMPREHENSIVE: 80000
+def build_story_prompt(genre, theme, characters, setting, length):
+    """
+    Build the prompt for story generation
+    """
+    length_map = {
+        'short': '500-1000 words',
+        'medium': '1000-2000 words',
+        'long': '2000-3000 words'
     }
-    target_words = word_counts[request.story_length]
     
-    logger.info(f"Generating {request.story_length.value}: {request.subject_names}")
+    target_length = length_map.get(length, '500-1000 words')
     
-    # Create story record IMMEDIATELY and commit
-    story = Story(
-        user_id=user.id,
-        story_type="biography",
-        title=f"The Life of {request.subject_names}",
-        length_type=request.story_length.value,
-        generation_status="generating",
-        credits_cost=credit_cost,
-        metadata=json.dumps({
-            "subject": request.subject_names,
-            "type": request.biography_type.value,
-            "time_period": f"{request.time_period_start} - {request.time_period_end}",
-            "narrative_voice": request.narrative_voice.value if request.narrative_voice else "third_person_limited"
-        })
-    )
-    db.add(story)
-    db.flush()
-    db.commit()  # ENSURE IT'S SAVED
-    db.refresh(story)
+    prompt = f"""Write a compelling {genre} story with the following specifications:
+
+Theme: {theme}
+Target Length: {target_length}
+"""
     
-    story_id = story.id
-    logger.info(f"Biography record created with ID: {story_id}")
+    if characters:
+        prompt += f"\nMain Characters: {characters}"
+    
+    if setting:
+        prompt += f"\nSetting: {setting}"
+    
+    prompt += """
+
+Please write a complete, engaging story that:
+1. Has a clear beginning, middle, and end
+2. Develops the characters and theme effectively
+3. Uses vivid descriptions and engaging dialogue
+4. Stays within the target length
+5. Is appropriate for a general audience
+
+Write only the story itself, without any preamble or meta-commentary.
+"""
+    
+    return prompt
+
+
+def create_story_record(db, story_data):
+    """
+    Create a new story record in the database
+    
+    Args:
+        db: Database session
+        story_data: Dictionary containing story parameters
+    
+    Returns:
+        Created story object with ID
+    """
+    from models import Story
     
     try:
-        # Build detailed biography prompt
-        details = []
-        if request.birth_details:
-            details.append(f"BIRTH: {json.dumps(request.birth_details)}")
-        if request.family_background:
-            details.append(f"FAMILY: {json.dumps(request.family_background)}")
-        if request.childhood:
-            details.append(f"CHILDHOOD: {json.dumps(request.childhood)}")
-        if request.career:
-            details.append(f"CAREER: {json.dumps(request.career)}")
-        if request.relationships:
-            details.append(f"RELATIONSHIPS: {json.dumps(request.relationships)}")
-        if request.major_events:
-            details.append(f"MAJOR EVENTS: {json.dumps([e.dict() for e in request.major_events])}")
-        if request.personality:
-            details.append(f"PERSONALITY: {json.dumps(request.personality)}")
-        if request.achievements:
-            details.append(f"ACHIEVEMENTS: {json.dumps(request.achievements)}")
+        # Create new story record
+        story = Story(
+            genre=story_data.get('genre'),
+            theme=story_data.get('theme'),
+            characters=story_data.get('characters'),
+            setting=story_data.get('setting'),
+            length=story_data.get('length', 'short'),
+            status='pending',
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow()
+        )
         
-        bio_prompt = f"""Write a compelling {request.biography_type.value} about:
-
-SUBJECT: {request.subject_names}
-TIME PERIOD: {request.time_period_start} to {request.time_period_end}
-TARGET LENGTH: {target_words} words
-NARRATIVE VOICE: {request.narrative_voice.value if request.narrative_voice else 'third_person_limited'}
-TONE: {request.tone or 'balanced, respectful, engaging'}
-WRITING STYLE: {request.writing_style or 'chronological'}
-
-DETAILS PROVIDED:
-{chr(10).join(details) if details else 'Limited information - create plausible, historically accurate details based on context'}
-
-{f'FOCUS AREAS: {", ".join(request.focus_areas)}' if request.focus_areas else ''}
-{f'THEMES: {", ".join(request.themes)}' if request.themes else ''}
-
-INSTRUCTIONS:
-- Create a compelling, human life story
-- Fill in missing details with historically accurate, contextually appropriate content
-- Structure in chapters covering different life periods
-- Make it engaging and emotionally resonant
-- Show character growth and transformation
-- Include vivid scenes and anecdotes
-- Balance facts with storytelling
-
-Write the complete {request.biography_type.value} now:"""
-        
-        content = llm.generate(bio_prompt, GHOSTWRITER_BIOGRAPHY, "llama-3.3-70b-versatile")
-        
-        # Save completed biography
-        story.content = content
-        story.generation_status = "complete"
-        story.completed_at = datetime.utcnow()
-        
-        # Deduct credits
-        if credit_cost > 0:
-            if not user.deduct_credits(credit_cost):
-                raise Exception("Credit deduction failed")
-            
-            transaction = Transaction(
-                user_id=user.id,
-                transaction_type="story_generation",
-                credits_amount=-credit_cost,
-                description=f"Generated {request.story_length.value} biography",
-                status="completed",
-                story_id=story.id
-            )
-            db.add(transaction)
-        
-        db.commit()  # FINAL COMMIT
+        db.add(story)
+        db.commit()  # CRITICAL FIX: Commit immediately to get the ID
         db.refresh(story)
-        logger.info(f"Biography {story_id} completed and saved")
         
-        word_count = len(content.split())
-        
-        return {
-            "story_id": story.id,
-            "title": story.title,
-            "content": content,
-            "word_count": word_count,
-            "credits_used": credit_cost
-        }
+        print(f"Created story record with ID: {story.id}")
+        return story
         
     except Exception as e:
-        logger.error(f"Biography generation failed for story {story_id}: {str(e)}")
-        # Update story status to error
-        story.generation_status = "error"
-        story.metadata = json.dumps({
-            **json.loads(story.metadata),
-            "error": str(e)
-        })
-        db.commit()  # SAVE ERROR STATE
-        raise Exception(f"Biography generation failed: {str(e)}")
+        print(f"Error creating story record: {str(e)}")
+        db.rollback()
+        raise
