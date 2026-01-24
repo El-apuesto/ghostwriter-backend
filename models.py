@@ -1,31 +1,40 @@
 """
-Database models for the story application
+Database models for FastAPI + SQLAlchemy
+Replace your ENTIRE models.py file with this
 """
 from datetime import datetime
-from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import Column, Integer, String, Text, DateTime
+from sqlalchemy.ext.declarative import declarative_base
 
-# This should match the db instance in main.py
-# In main.py: db = SQLAlchemy(app)
-# Import this db instance here or pass it appropriately
+Base = declarative_base()
 
-db = None  # This will be set by importing from main.py
+class User(Base):
+    """User model"""
+    __tablename__ = 'users'
+    
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String(255), unique=True, index=True, nullable=False)
+    hashed_password = Column(String(255), nullable=False)
+    username = Column(String(100), unique=True, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-class Story(db.Model):
-    """Story model"""
+class Story(Base):
+    """Story model for AI-generated stories"""
     __tablename__ = 'stories'
     
-    id = db.Column(db.Integer, primary_key=True)
-    title = db.Column(db.String(200))
-    genre = db.Column(db.String(50), nullable=False)
-    theme = db.Column(db.String(200), nullable=False)
-    characters = db.Column(db.Text)
-    setting = db.Column(db.String(200))
-    length = db.Column(db.String(20), default='short')
-    content = db.Column(db.Text)
-    status = db.Column(db.String(20), default='pending')  # pending, generating, completed, failed
-    error_message = db.Column(db.Text)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String(200))
+    genre = Column(String(50), nullable=False)
+    theme = Column(String(200), nullable=False)
+    characters = Column(Text)
+    setting = Column(String(200))
+    length = Column(String(20), default='short')
+    content = Column(Text)
+    status = Column(String(20), default='pending')
+    error_message = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     def to_dict(self):
         """Convert story to dictionary"""
