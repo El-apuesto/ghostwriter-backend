@@ -1,13 +1,13 @@
 """
-Story generation module with proper database commit handling
+Story generation module using Groq LLM with proper database commit handling
 """
-import os
 from datetime import datetime
-from anthropic import Anthropic
+from llm_client import llm
+from config import settings
 
 def generate_story(db, story_id, genre, theme, characters=None, setting=None, length='short'):
     """
-    Generate a story using Claude AI with immediate database commit
+    Generate a story using Groq (Llama 3.3 70B) with immediate database commit
     
     Args:
         db: Database session/connection
@@ -20,7 +20,7 @@ def generate_story(db, story_id, genre, theme, characters=None, setting=None, le
     """
     try:
         # Get the story record
-        from models import Story  # Adjust import based on your structure
+        from models import Story
         story = db.query(Story).filter(Story.id == story_id).first()
         
         if not story:
@@ -28,34 +28,44 @@ def generate_story(db, story_id, genre, theme, characters=None, setting=None, le
         
         # Update status to generating and commit immediately
         story.status = 'generating'
-        db.commit()  # CRITICAL FIX: Commit immediately so frontend can find the record
+        db.commit()  # CRITICAL: Commit immediately so frontend can find the record
         db.refresh(story)
         
         print(f"Starting story generation for ID: {story_id}")
         
-        # Prepare the prompt
+        # Build the prompt
         prompt = build_story_prompt(genre, theme, characters, setting, length)
         
-        # Initialize Anthropic client
-        api_key = os.environ.get("ANTHROPIC_API_KEY")
-        if not api_key:
-            raise ValueError("ANTHROPIC_API_KEY environment variable not set")
+        # System prompt with GhostWriter personality
+        system_prompt = """You are GhostWriter, a sardonic and wickedly clever AI storyteller with a penchant for deadpan humor and dark comedy.
+
+Your writing style is:
+- Sarcastic but never mean-spirited
+- Observant of human absurdities
+- Master of the unexpected twist
+- Comfortable with gallows humor
+- Eloquent yet conversational
+- Self-aware (occasionally breaks the fourth wall)
+
+You write stories that make readers laugh uncomfortably, think deeply, and question reality.
+Your prose is sharp, your dialogue crackles, and your descriptions paint vivid, slightly unsettling pictures.
+
+Write ONLY the story itself - no preamble, no meta-commentary, no "Here's your story" intro."""
         
-        client = Anthropic(api_key=api_key)
-        
-        # Generate the story
-        print("Calling Claude API...")
-        response = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=4096,
-            messages=[{
-                "role": "user",
-                "content": prompt
-            }]
+        # Generate the story using Groq
+        print(f"Calling Groq API with model: {settings.creative_model}")
+        story_content = llm.generate(
+            prompt=prompt,
+            system_prompt=system_prompt,
+            model=settings.creative_model,
+            temperature=0.8,
+            max_tokens=4000
         )
         
-        # Extract the story content
-        story_content = response.content[0].text
+        # Generate a title if none exists
+        if not story.title or story.title == 'Untitled Story':
+            title = generate_title(genre, theme, story_content[:500])
+            story.title = title
         
         # Update the story record with content
         story.content = story_content
@@ -84,40 +94,74 @@ def generate_story(db, story_id, genre, theme, characters=None, setting=None, le
         raise
 
 
+def generate_title(genre, theme, story_preview):
+    """
+    Generate a catchy title for the story based on genre, theme, and preview
+    """
+    try:
+        prompt = f"""Based on this story preview, create a short, catchy title (3-6 words max):
+
+Genre: {genre}
+Theme: {theme}
+Preview: {story_preview}
+
+Respond with ONLY the title, nothing else."""
+        
+        system_prompt = "You are a creative title generator. Respond with ONLY the title, no quotes, no explanation."
+        
+        title = llm.generate(
+            prompt=prompt,
+            system_prompt=system_prompt,
+            model=settings.creative_model,
+            temperature=0.7,
+            max_tokens=50
+        )
+        
+        # Clean up the title
+        title = title.strip().strip('"').strip("'").strip()
+        return title[:100]  # Limit length
+        
+    except Exception as e:
+        print(f"Error generating title: {str(e)}")
+        return f"{genre.title()}: {theme[:30]}"
+
+
 def build_story_prompt(genre, theme, characters, setting, length):
     """
     Build the prompt for story generation
     """
     length_map = {
-        'short': '500-1000 words',
-        'medium': '1000-2000 words',
-        'long': '2000-3000 words'
+        'short': '800-1200 words',
+        'medium': '1500-2500 words',
+        'long': '3000-4000 words'
     }
     
-    target_length = length_map.get(length, '500-1000 words')
+    target_length = length_map.get(length, '800-1200 words')
     
-    prompt = f"""Write a compelling {genre} story with the following specifications:
+    prompt = f"""Write a complete {genre} story with the following specifications:
 
-Theme: {theme}
-Target Length: {target_length}
+**Theme:** {theme}
+**Target Length:** {target_length}
 """
     
     if characters:
-        prompt += f"\nMain Characters: {characters}"
+        prompt += f"\n**Main Characters:** {characters}"
     
     if setting:
-        prompt += f"\nSetting: {setting}"
+        prompt += f"\n**Setting:** {setting}"
     
-    prompt += """
+    prompt += f"""
 
-Please write a complete, engaging story that:
-1. Has a clear beginning, middle, and end
-2. Develops the characters and theme effectively
-3. Uses vivid descriptions and engaging dialogue
-4. Stays within the target length
-5. Is appropriate for a general audience
+**Requirements:**
+1. Full narrative arc: beginning, middle, and satisfying end
+2. Rich character development and thematic depth
+3. Vivid descriptions that engage the senses
+4. Natural, distinctive dialogue
+5. Maintain your signature sardonic wit and dark humor
+6. Stay within the target word count
+7. Make it memorable and slightly unsettling
 
-Write only the story itself, without any preamble or meta-commentary.
+Write the complete story now. Begin immediately with the narrative - no title, no introduction.
 """
     
     return prompt
@@ -139,6 +183,7 @@ def create_story_record(db, story_data):
     try:
         # Create new story record
         story = Story(
+            title=story_data.get('title', 'Untitled Story'),
             genre=story_data.get('genre'),
             theme=story_data.get('theme'),
             characters=story_data.get('characters'),
@@ -150,7 +195,7 @@ def create_story_record(db, story_data):
         )
         
         db.add(story)
-        db.commit()  # CRITICAL FIX: Commit immediately to get the ID
+        db.commit()  # CRITICAL: Commit immediately to get the ID
         db.refresh(story)
         
         print(f"Created story record with ID: {story.id}")
