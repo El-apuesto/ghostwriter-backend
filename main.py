@@ -20,12 +20,12 @@ app.add_middleware(
     expose_headers=["*"],
 )
 
-# Include auth routes (THIS WAS MISSING - CAUSING 404)
+# Include auth routes
 from routes_auth import router as auth_router
 app.include_router(auth_router)
 
-# Include story routes
-from story_routes import router as story_router
+# Include story routes - FIX: routes_stories not story_routes
+from routes_stories import router as story_router
 app.include_router(story_router)
 
 # Health check endpoint
