@@ -1,10 +1,9 @@
 """
-Main FastAPI application with CORS, Auth, and Story routes
+Complete main.py with CORS and Story Routes integrated
+Replace your entire main.py with this file
 """
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routes_auth import router as auth_router
-from routes_stories import router as story_router
 
 # Create app
 app = FastAPI(title="Ghostwriter API", version="1.0.0")
@@ -16,31 +15,36 @@ app.add_middleware(
         "http://localhost:3000",
         "http://localhost:5173",
         "https://ghostwriter-frontend-tawny.vercel.app",
+        "https://*.vercel.app",  # Allow all Vercel preview deployments
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
-# Include routers
-app.include_router(auth_router)      # /api/auth/*
-app.include_router(story_router)     # /api/stories/*
+# Include story routes
+from story_routes import router as story_router
+app.include_router(story_router)
 
-# Health check endpoints
+# Health check endpoint
 @app.get("/")
 async def root():
-    return {"message": "Ghostwriter API is running", "status": "alive"}
+    return {"message": "Ghostwriter API is running"}
+
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy"}
 
 @app.get("/api/health")
-async def health_check():
-    return {"status": "healthy", "service": "ghostwriter-backend"}
+async def api_health_check():
+    return {"status": "healthy"}
 
 # Application startup
 @app.on_event("startup")
 async def startup_event():
     print("✓ Ghostwriter API started")
-    print("✓ CORS configured for Vercel frontend")
-    print("✓ Auth routes available at /api/auth")
+    print("✓ CORS configured")
     print("✓ Story routes available at /api/stories")
 
 # Run with: uvicorn main:app --host 0.0.0.0 --port $PORT
