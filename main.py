@@ -1,4 +1,4 @@
-"""Main FastAPI application with auth and story routes"""
+"""Main FastAPI application with all routes"""
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -24,9 +24,21 @@ app.add_middleware(
 from routes_auth import router as auth_router
 app.include_router(auth_router)
 
-# Include story routes - FIX: routes_stories not story_routes
+# Include story routes
 from routes_stories import router as story_router
 app.include_router(story_router)
+
+# Include features routes (covers, exports, extras)
+from routes_features import router as features_router
+app.include_router(features_router)
+
+# Include payment routes
+from routes_payments import router as payments_router
+app.include_router(payments_router)
+
+# Include webhook routes
+from webhooks import router as webhook_router
+app.include_router(webhook_router)
 
 # Health check endpoint
 @app.get("/")
@@ -48,5 +60,8 @@ async def startup_event():
     print("✓ CORS configured")
     print("✓ Auth routes available at /api/auth")
     print("✓ Story routes available at /api/stories")
+    print("✓ Feature routes available at /api/stories/{id}/cover|export|blurb|author-bio")
+    print("✓ Payment routes available at /api/payments")
+    print("✓ Webhook routes available at /api/webhooks")
 
 # Run with: uvicorn main:app --host 0.0.0.0 --port $PORT
