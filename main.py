@@ -1,7 +1,4 @@
-"""
-Complete main.py with CORS and Story Routes integrated
-Replace your entire main.py with this file
-"""
+"""Main FastAPI application with auth and story routes"""
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -22,6 +19,10 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["*"],
 )
+
+# Include auth routes (THIS WAS MISSING - CAUSING 404)
+from routes_auth import router as auth_router
+app.include_router(auth_router)
 
 # Include story routes
 from story_routes import router as story_router
@@ -45,6 +46,7 @@ async def api_health_check():
 async def startup_event():
     print("✓ Ghostwriter API started")
     print("✓ CORS configured")
+    print("✓ Auth routes available at /api/auth")
     print("✓ Story routes available at /api/stories")
 
 # Run with: uvicorn main:app --host 0.0.0.0 --port $PORT
