@@ -72,6 +72,7 @@ class Story(Base):
     
     # Fiction fields
     premise = Column(Text)  # Main plot description
+    theme = Column(Text)  # Story theme (for compatibility with story_generation.py)
     genre = Column(String(50))
     writing_style = Column(String(50))
     setting = Column(String(500))
@@ -81,6 +82,7 @@ class Story(Base):
     themes = Column(JSON)  # Array of theme strings
     characters = Column(JSON)  # Array of {name, role, description, quirks}
     timeline = Column(JSON)  # Array of {chapter, description, mood}
+    metadata = Column(JSON)  # General metadata storage (chapter outlines, etc.)
     
     # Biography fields
     biography_type = Column(String(50))  # autobiography, biography, memoir
@@ -107,10 +109,14 @@ class Story(Base):
     focus_areas = Column(JSON)  # Array of strings
     
     # Story content and metadata
-    length = Column(String(20), default='short')  # short, novella, novel, epic
+    length = Column(String(20), default='short')  # short, medium, long, novella, novel, epic
     word_count = Column(Integer, default=0)
     content = Column(Text)  # Generated story text
     chapters = Column(JSON)  # Array of {number, title, content}
+    
+    # NEW: Chapter progress tracking
+    chapters_completed = Column(Integer, default=0)
+    total_chapters = Column(Integer, default=0)
     
     # Generation tracking
     error_message = Column(Text)
@@ -133,6 +139,7 @@ class Story(Base):
             'story_type': self.story_type,
             'status': self.status,
             'premise': self.premise,
+            'theme': self.theme,
             'genre': self.genre,
             'writing_style': self.writing_style,
             'setting': self.setting,
@@ -140,6 +147,7 @@ class Story(Base):
             'themes': self.themes,
             'characters': self.characters,
             'timeline': self.timeline,
+            'metadata': self.metadata,
             'biography_type': self.biography_type,
             'subject_names': self.subject_names,
             'time_period_start': self.time_period_start,
@@ -164,6 +172,8 @@ class Story(Base):
             'word_count': self.word_count,
             'content': self.content,
             'chapters': self.chapters,
+            'chapters_completed': self.chapters_completed,
+            'total_chapters': self.total_chapters,
             'error_message': self.error_message,
             'credits_cost': self.credits_cost,
             'created_at': self.created_at.isoformat() if self.created_at else None,
