@@ -10,30 +10,28 @@ from database import get_db
 from auth import get_current_user
 from models import User
 
-router = APIRouter(prefix="/api/payments", tags=["payments"])
-
-# Initialize Stripe with API key
 stripe.api_key = os.getenv('STRIPE_SECRET_KEY')
 
-# Credit packages configuration
+router = APIRouter(prefix="/api/payments", tags=["payments"])
+
 CREDIT_PACKAGES = {
     "starter": {
         "credits": 100,
         "price": 999,  # $9.99 in cents
         "product_name": "Starter Pack",
-        "description": "100 credits - Perfect for trying GhostWriter"
+        "description": "Perfect for trying out GhostWriter"
     },
     "creator": {
         "credits": 300,
         "price": 2499,  # $24.99 in cents
         "product_name": "Creator Pack",
-        "description": "300 credits - Best value for regular creators"
+        "description": "Best value for regular users"
     },
     "professional": {
         "credits": 1000,
         "price": 6999,  # $69.99 in cents
         "product_name": "Professional Pack",
-        "description": "1000 credits - For serious authors"
+        "description": "For serious authors"
     },
 }
 
@@ -47,10 +45,8 @@ async def create_checkout_session(
     """
     Create Stripe checkout session for credit purchase
     
-    Returns a checkout URL that redirects user to Stripe payment page.
-    After successful payment, webhook will add credits to user account.
+    Frontend should redirect user to the returned checkout_url
     """
-    
     if package not in CREDIT_PACKAGES:
         raise HTTPException(
             status_code=400,
@@ -60,10 +56,9 @@ async def create_checkout_session(
     pkg = CREDIT_PACKAGES[package]
     
     try:
-        # Get frontend URL from environment
+        # Get frontend URL from env or default
         frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:5173')
         
-        # Create Stripe checkout session
         checkout_session = stripe.checkout.Session.create(
             payment_method_types=['card'],
             line_items=[{
@@ -71,7 +66,7 @@ async def create_checkout_session(
                     'currency': 'usd',
                     'product_data': {
                         'name': pkg['product_name'],
-                        'description': pkg['description'],
+                        'description': f"{pkg['credits']} GhostWriter credits - {pkg['description']}",
                     },
                     'unit_amount': pkg['price'],
                 },
@@ -82,10 +77,9 @@ async def create_checkout_session(
             cancel_url=f"{frontend_url}/credits?canceled=true",
             client_reference_id=str(current_user.id),
             metadata={
-                'user_id': current_user.id,
-                'credits': pkg['credits'],
-                'package': package,
-                'user_email': current_user.email
+                'user_id': str(current_user.id),
+                'credits': str(pkg['credits']),
+                'package': package
             }
         )
         
@@ -103,7 +97,7 @@ async def create_checkout_session(
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to create checkout session: {str(e)}"
+            detail=f"Payment error: {str(e)}"
         )
 
 
@@ -112,59 +106,37 @@ async def get_credit_packages():
     """
     Get available credit packages with pricing
     
-    Returns all available credit packages for display on frontend.
+    Returns packages with prices formatted for display
     """
+    formatted_packages = {}
+    
+    for key, pkg in CREDIT_PACKAGES.items():
+        formatted_packages[key] = {
+            **pkg,
+            "price_display": f"${pkg['price'] / 100:.2f}",
+            "price_per_credit": f"${pkg['price'] / 100 / pkg['credits']:.3f}"
+        }
+    
     return {
-        "success": True,
-        "packages": CREDIT_PACKAGES
+        "packages": formatted_packages,
+        "currency": "USD"
     }
 
 
-@router.get("/session/{session_id}")
-async def get_checkout_session(
-    session_id: str,
-    current_user: User = Depends(get_current_user)
+@router.get("/history")
+async def get_payment_history(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     """
-    Get details of a checkout session
+    Get user's credit purchase history
     
-    Used to verify payment status after redirect from Stripe.
-    """
-    try:
-        session = stripe.checkout.Session.retrieve(session_id)
-        
-        # Verify this session belongs to current user
-        if session.client_reference_id != str(current_user.id):
-            raise HTTPException(
-                status_code=403,
-                detail="This checkout session doesn't belong to you"
-            )
-        
-        return {
-            "success": True,
-            "status": session.payment_status,
-            "amount_total": session.amount_total,
-            "credits": session.metadata.get('credits'),
-            "package": session.metadata.get('package')
-        }
-        
-    except stripe.error.StripeError as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to retrieve session: {str(e)}"
-        )
-
-
-@router.get("/balance")
-async def get_credit_balance(
-    current_user: User = Depends(get_current_user)
-):
-    """
-    Get current user's credit balance
+    TODO: Implement transaction history table to track purchases
+    For now, returns summary from user model
     """
     return {
-        "success": True,
-        "balance": current_user.credits_balance,
         "total_purchased": current_user.total_credits_purchased,
-        "total_spent": current_user.total_credits_spent
+        "total_spent": current_user.total_credits_spent,
+        "current_balance": current_user.credits_balance,
+        "transactions": []  # TODO: Add Transaction model and query
     }
