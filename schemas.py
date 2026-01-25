@@ -31,6 +31,29 @@ class UserProfile(BaseModel):
     class Config:
         from_attributes = True
 
+# ===== SIMPLE STORY GENERATION SCHEMA =====
+
+class StoryCreateRequest(BaseModel):
+    """Simple story generation request"""
+    title: Optional[str] = None
+    genre: str = Field(..., min_length=1)
+    theme: str = Field(..., min_length=10)
+    characters: Optional[str] = None
+    setting: Optional[str] = None
+    length: str = Field(default="short")  # short, medium, long
+
+class StoryResponse(BaseModel):
+    """Story response for list views"""
+    id: int
+    title: Optional[str]
+    genre: str
+    theme: str
+    status: str
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
 # ===== FICTION SCHEMAS =====
 
 class WritingStyle(str, Enum):
@@ -142,18 +165,7 @@ class BiographyRequest(BaseModel):
     focus_areas: Optional[List[str]] = None
     themes: Optional[List[str]] = None
 
-# ===== STORY RESPONSE SCHEMAS =====
-
-class StoryResponse(BaseModel):
-    story_id: int
-    title: str
-    story_type: str
-    status: str
-    credits_cost: int
-    created_at: datetime
-    
-    class Config:
-        from_attributes = True
+# ===== STORY RESPONSE SCHEMAS (Old format - keeping for compatibility) =====
 
 class StoryDetail(BaseModel):
     id: int
