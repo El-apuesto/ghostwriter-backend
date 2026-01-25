@@ -1,42 +1,48 @@
 """
-Story generation module using Groq LLM with proper database commit handling
+Story generation module with iterative chapter-by-chapter generation
 """
 from datetime import datetime
 from llm_client import llm
 from config import settings
+import json
 
-def generate_story(db, story_id, genre, theme, characters=None, setting=None, length='short'):
+def generate_chapter(
+    chapter_title: str,
+    subject: str,
+    genre: str,
+    style: str,
+    context_summary: str = "",
+    target_word_count: int = 8000
+) -> str:
     """
-    Generate a story using Groq (Llama 3.3 70B) with immediate database commit
+    Generates a single chapter iteratively until target word count is reached.
+    Uses last 512 words as context for continuation to avoid token limits.
     
     Args:
-        db: Database session/connection
-        story_id: ID of the story record
+        chapter_title: Title of the chapter
+        subject: Main story theme/subject
         genre: Story genre
-        theme: Story theme
-        characters: Optional character descriptions
-        setting: Optional setting description
-        length: Story length (short, medium, long)
+        style: Writing style
+        context_summary: Summary from previous chapter (last 512 words)
+        target_word_count: Target word count for this chapter
+    
+    Returns:
+        Complete chapter text
     """
     try:
-        # Get the story record
-        from models import Story
-        story = db.query(Story).filter(Story.id == story_id).first()
+        generated_text = ""
+        total_word_count = 0
         
-        if not story:
-            raise ValueError(f"Story with ID {story_id} not found")
+        # Initial prompt for chapter start
+        prompt = f"""Chapter Title: {chapter_title}
+Story Theme: {subject}
+Story Style: {style}
+Story Genre: {genre}
+Context Summary: {context_summary}
+
+Write the next part of this chapter with rich detail, vivid descriptions, and compelling narrative.
+"""
         
-        # Update status to generating and commit immediately
-        story.status = 'generating'
-        db.commit()  # CRITICAL: Commit immediately so frontend can find the record
-        db.refresh(story)
-        
-        print(f"Starting story generation for ID: {story_id}")
-        
-        # Build the prompt
-        prompt = build_story_prompt(genre, theme, characters, setting, length)
-        
-        # System prompt with GhostWriter personality
         system_prompt = """You are GhostWriter, a sardonic and wickedly clever AI storyteller with a penchant for deadpan humor and dark comedy.
 
 Your writing style is:
@@ -50,31 +56,215 @@ Your writing style is:
 You write stories that make readers laugh uncomfortably, think deeply, and question reality.
 Your prose is sharp, your dialogue crackles, and your descriptions paint vivid, slightly unsettling pictures.
 
-Write ONLY the story itself - no preamble, no meta-commentary, no "Here's your story" intro."""
+Write ONLY the story content - no preamble, no meta-commentary."""
         
-        # Generate the story using Groq
-        print(f"Calling Groq API with model: {settings.creative_model}")
-        story_content = llm.generate(
+        # Iteratively generate until we hit target word count
+        while total_word_count < target_word_count:
+            # Calculate remaining words needed
+            remaining_words = target_word_count - total_word_count
+            # Estimate tokens (roughly 1.3 words per token)
+            max_tokens = min(1500, int(remaining_words * 1.3))
+            
+            # Generate next chunk
+            new_text = llm.generate(
+                prompt=prompt,
+                system_prompt=system_prompt,
+                model=settings.creative_model,
+                temperature=0.8,
+                max_tokens=max_tokens
+            )
+            
+            generated_text += new_text + "\n\n"
+            total_word_count = len(generated_text.split())
+            
+            # Update prompt with last 512 words for context continuity
+            words = generated_text.split()
+            last_512_words = ' '.join(words[-512:]) if len(words) > 512 else generated_text
+            prompt = f"Continue the story: {last_512_words}\n\nStory Theme: {subject}\n\n"
+            
+            print(f"Chapter '{chapter_title}': {total_word_count}/{target_word_count} words generated")
+        
+        return f"# {chapter_title}\n\n{generated_text.strip()}"
+        
+    except Exception as e:
+        print(f"Error generating chapter '{chapter_title}': {e}")
+        raise
+
+
+def generate_chapter_outline(subject: str, genre: str, num_chapters: int, total_words: int) -> list:
+    """
+    Generate chapter titles and summaries for the entire story structure.
+    
+    Args:
+        subject: Story theme/subject
+        genre: Story genre
+        num_chapters: Number of chapters needed
+        total_words: Total target word count
+    
+    Returns:
+        List of dicts with 'title' and 'summary' for each chapter
+    """
+    try:
+        prompt = f"""Create a {num_chapters}-chapter outline for a {genre} story about: {subject}
+
+Target total length: {total_words} words
+
+For each chapter, provide:
+1. A compelling chapter title (3-8 words)
+2. A brief summary of what happens (2-3 sentences)
+
+Format your response as a JSON array like this:
+[
+  {{"title": "Chapter Title", "summary": "What happens in this chapter"}},
+  ...
+]
+
+Respond with ONLY the JSON array, no other text."""
+        
+        system_prompt = "You are a story structure expert. Respond with ONLY valid JSON, no markdown, no explanation."
+        
+        outline_json = llm.generate(
             prompt=prompt,
             system_prompt=system_prompt,
             model=settings.creative_model,
-            temperature=0.8,
-            max_tokens=4000
+            temperature=0.7,
+            max_tokens=2000
         )
         
-        # Generate a title if none exists
+        # Clean up response (remove markdown code blocks if present)
+        outline_json = outline_json.strip()
+        if outline_json.startswith("```"):
+            lines = outline_json.split("\n")
+            outline_json = "\n".join(lines[1:-1])  # Remove first and last lines
+        
+        outline = json.loads(outline_json)
+        
+        # Validate we got the right number of chapters
+        if len(outline) != num_chapters:
+            print(f"Warning: Got {len(outline)} chapters, expected {num_chapters}")
+        
+        return outline
+        
+    except Exception as e:
+        print(f"Error generating chapter outline: {e}")
+        # Fallback: create simple numbered chapters
+        return [
+            {
+                "title": f"Chapter {i+1}",
+                "summary": f"Part {i+1} of the story"
+            }
+            for i in range(num_chapters)
+        ]
+
+
+def generate_story(db, story_id, genre, theme, characters=None, setting=None, length='short'):
+    """
+    Generate a complete multi-chapter story using iterative generation.
+    Updates database after each chapter completes.
+    
+    Args:
+        db: Database session/connection
+        story_id: ID of the story record
+        genre: Story genre
+        theme: Story theme
+        characters: Optional character descriptions
+        setting: Optional setting description
+        length: Story length (short, medium, long, novella, novel, epic)
+    """
+    try:
+        from models import Story
+        story = db.query(Story).filter(Story.id == story_id).first()
+        
+        if not story:
+            raise ValueError(f"Story with ID {story_id} not found")
+        
+        # Update status to generating and commit immediately
+        story.status = 'generating'
+        db.commit()
+        db.refresh(story)
+        
+        print(f"Starting story generation for ID: {story_id}")
+        
+        # Determine chapter structure based on length
+        length_config = {
+            'short': {'words': 3000, 'chapters': 1, 'words_per_chapter': 3000},
+            'medium': {'words': 8000, 'chapters': 2, 'words_per_chapter': 4000},
+            'long': {'words': 15000, 'chapters': 3, 'words_per_chapter': 5000},
+            'novella': {'words': 45000, 'chapters': 6, 'words_per_chapter': 7500},
+            'novel': {'words': 90000, 'chapters': 12, 'words_per_chapter': 7500},
+            'epic': {'words': 140000, 'chapters': 18, 'words_per_chapter': 7800}
+        }
+        
+        config = length_config.get(length, length_config['short'])
+        num_chapters = config['chapters']
+        words_per_chapter = config['words_per_chapter']
+        total_words = config['words']
+        
+        # Build enhanced theme with characters and setting
+        enhanced_theme = theme
+        if characters:
+            enhanced_theme += f"\n\nMain Characters: {characters}"
+        if setting:
+            enhanced_theme += f"\n\nSetting: {setting}"
+        
+        # Generate chapter outline first
+        print(f"Generating outline for {num_chapters} chapters...")
+        chapter_outline = generate_chapter_outline(enhanced_theme, genre, num_chapters, total_words)
+        
+        # Store chapter outline in story metadata
+        story.metadata = {'chapter_outline': chapter_outline}
+        db.commit()
+        
+        # Generate chapters sequentially
+        all_chapters = []
+        context_summary = ""
+        
+        for i, chapter_info in enumerate(chapter_outline):
+            chapter_num = i + 1
+            chapter_title = chapter_info.get('title', f'Chapter {chapter_num}')
+            
+            print(f"\n=== Generating Chapter {chapter_num}/{num_chapters}: {chapter_title} ===")
+            
+            # Generate the chapter
+            chapter_content = generate_chapter(
+                chapter_title=chapter_title,
+                subject=enhanced_theme + f"\n\nChapter Summary: {chapter_info.get('summary', '')}",
+                genre=genre,
+                style='sardonic and darkly humorous',
+                context_summary=context_summary,
+                target_word_count=words_per_chapter
+            )
+            
+            all_chapters.append(chapter_content)
+            
+            # Update context summary with last 512 words from this chapter
+            words = chapter_content.split()
+            context_summary = ' '.join(words[-512:]) if len(words) > 512 else chapter_content
+            
+            # Save progress to database after each chapter
+            story.content = '\n\n---\n\n'.join(all_chapters)
+            story.chapters_completed = chapter_num
+            story.total_chapters = num_chapters
+            story.word_count = len(story.content.split())
+            story.updated_at = datetime.utcnow()
+            db.commit()
+            db.refresh(story)
+            
+            print(f"Chapter {chapter_num} completed and saved. Total words: {story.word_count}")
+        
+        # Generate title if none exists
         if not story.title or story.title == 'Untitled Story':
-            title = generate_title(genre, theme, story_content[:500])
+            title = generate_title(genre, theme, all_chapters[0][:500])
             story.title = title
         
-        # Update the story record with content
-        story.content = story_content
+        # Mark as completed
         story.status = 'completed'
-        story.updated_at = datetime.utcnow()
-        db.commit()  # Commit the completed story
+        story.completed_at = datetime.utcnow()
+        db.commit()
         db.refresh(story)
         
         print(f"Story generation completed for ID: {story_id}")
+        print(f"Final word count: {story.word_count} words across {num_chapters} chapters")
         return story
         
     except Exception as e:
@@ -128,7 +318,7 @@ Respond with ONLY the title, nothing else."""
 
 def build_story_prompt(genre, theme, characters, setting, length):
     """
-    Build the prompt for story generation
+    Build the prompt for story generation (legacy, kept for compatibility)
     """
     length_map = {
         'short': '800-1200 words',
@@ -183,6 +373,8 @@ def create_story_record(db, story_data):
     try:
         # Create new story record
         story = Story(
+            user_id=story_data['user_id'],
+            story_type='fiction',
             title=story_data.get('title', 'Untitled Story'),
             genre=story_data.get('genre'),
             theme=story_data.get('theme'),
@@ -190,12 +382,14 @@ def create_story_record(db, story_data):
             setting=story_data.get('setting'),
             length=story_data.get('length', 'short'),
             status='pending',
+            chapters_completed=0,
+            total_chapters=0,
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow()
         )
         
         db.add(story)
-        db.commit()  # CRITICAL: Commit immediately to get the ID
+        db.commit()
         db.refresh(story)
         
         print(f"Created story record with ID: {story.id}")
