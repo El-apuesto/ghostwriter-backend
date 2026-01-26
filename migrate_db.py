@@ -1,61 +1,62 @@
 """
-Database migration script - adds new fields to Story model
-Run this before starting the app or make it part of startup
+Database migration script to add new Story model fields
+Run this once after updating models.py
 """
 from database import engine
 from sqlalchemy import text, inspect
-import sys
-
-def column_exists(table_name: str, column_name: str) -> bool:
-    """Check if column exists in table"""
-    inspector = inspect(engine)
-    columns = [col['name'] for col in inspector.get_columns(table_name)]
-    return column_name in columns
 
 def add_missing_columns():
     """Add new columns to stories table if they don't exist"""
-    migrations = [
-        {
-            'column': 'chapters_completed',
-            'sql': 'ALTER TABLE stories ADD COLUMN chapters_completed INTEGER DEFAULT 0'
-        },
-        {
-            'column': 'total_chapters',
-            'sql': 'ALTER TABLE stories ADD COLUMN total_chapters INTEGER DEFAULT 0'
-        },
-        {
-            'column': 'theme',
-            'sql': 'ALTER TABLE stories ADD COLUMN theme TEXT'
-        },
-        {
-            'column': 'metadata',
-            'sql': 'ALTER TABLE stories ADD COLUMN metadata JSON'
-        },
-    ]
+    
+    inspector = inspect(engine)
+    existing_columns = [col['name'] for col in inspector.get_columns('stories')]
     
     with engine.connect() as conn:
-        for migration in migrations:
-            column_name = migration['column']
-            
-            if column_exists('stories', column_name):
-                print(f"✓ Column '{column_name}' already exists")
-                continue
-            
+        # Add chapters_completed
+        if 'chapters_completed' not in existing_columns:
             try:
-                conn.execute(text(migration['sql']))
+                conn.execute(text("ALTER TABLE stories ADD COLUMN chapters_completed INTEGER DEFAULT 0"))
                 conn.commit()
-                print(f"✓ Added column '{column_name}'")
+                print("✓ Added chapters_completed")
             except Exception as e:
-                print(f"✗ Error adding '{column_name}': {e}")
-                conn.rollback()
-                # Don't fail completely, continue with other migrations
-    
-    print("\n✅ Database migration complete!")
+                print(f"chapters_completed: {e}")
+        else:
+            print("chapters_completed already exists")
+        
+        # Add total_chapters
+        if 'total_chapters' not in existing_columns:
+            try:
+                conn.execute(text("ALTER TABLE stories ADD COLUMN total_chapters INTEGER DEFAULT 0"))
+                conn.commit()
+                print("✓ Added total_chapters")
+            except Exception as e:
+                print(f"total_chapters: {e}")
+        else:
+            print("total_chapters already exists")
+        
+        # Add theme
+        if 'theme' not in existing_columns:
+            try:
+                conn.execute(text("ALTER TABLE stories ADD COLUMN theme TEXT"))
+                conn.commit()
+                print("✓ Added theme")
+            except Exception as e:
+                print(f"theme: {e}")
+        else:
+            print("theme already exists")
+        
+        # Add metadata
+        if 'metadata' not in existing_columns:
+            try:
+                conn.execute(text("ALTER TABLE stories ADD COLUMN metadata JSON"))
+                conn.commit()
+                print("✓ Added metadata")
+            except Exception as e:
+                print(f"metadata: {e}")
+        else:
+            print("metadata already exists")
 
 if __name__ == "__main__":
-    try:
-        add_missing_columns()
-        sys.exit(0)  # Success
-    except Exception as e:
-        print(f"❌ Migration failed: {e}")
-        sys.exit(1)  # Failure
+    print("Starting database migration...")
+    add_missing_columns()
+    print("\n✅ Database migration complete!")
