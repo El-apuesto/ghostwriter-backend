@@ -301,7 +301,7 @@ def generate_biography_content(db: Session, story_id: int):
             total_words=config['words']
         )
         
-        story.metadata = {'chapter_outline': chapter_outline}
+        story.story_metadata = {'chapter_outline': chapter_outline}
         db.commit()
         
         # Generate chapters iteratively
