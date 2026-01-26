@@ -29,16 +29,25 @@ from routes_stories import router as story_router
 app.include_router(story_router)
 
 # Include features routes (covers, exports, extras)
-from routes_features import router as features_router
-app.include_router(features_router)
+try:
+    from routes_features import router as features_router
+    app.include_router(features_router)
+except ImportError:
+    print("⚠️ routes_features.py not found")
 
 # Include payment routes
-from routes_payments import router as payments_router
-app.include_router(payments_router)
+try:
+    from routes_payments import router as payments_router
+    app.include_router(payments_router)
+except ImportError:
+    print("⚠️ routes_payments.py not found")
 
 # Include webhook routes
-from webhooks import router as webhook_router
-app.include_router(webhook_router)
+try:
+    from webhooks import router as webhook_router
+    app.include_router(webhook_router)
+except ImportError:
+    print("⚠️ webhooks.py not found")
 
 # Health check endpoint
 @app.get("/")
@@ -53,9 +62,48 @@ async def health_check():
 async def api_health_check():
     return {"status": "healthy"}
 
-# Application startup
+# Application startup with auto-migration
 @app.on_event("startup")
 async def startup_event():
+    print("🚀 Starting Ghostwriter API...")
+    
+    # Run database migration automatically
+    try:
+        from database import engine
+        from sqlalchemy import text, inspect
+        
+        print("🔄 Checking database schema...")
+        inspector = inspect(engine)
+        existing_columns = [col['name'] for col in inspector.get_columns('stories')]
+        
+        migrations_run = []
+        with engine.connect() as conn:
+            if 'chapters_completed' not in existing_columns:
+                conn.execute(text("ALTER TABLE stories ADD COLUMN chapters_completed INTEGER DEFAULT 0"))
+                migrations_run.append("chapters_completed")
+            
+            if 'total_chapters' not in existing_columns:
+                conn.execute(text("ALTER TABLE stories ADD COLUMN total_chapters INTEGER DEFAULT 0"))
+                migrations_run.append("total_chapters")
+            
+            if 'theme' not in existing_columns:
+                conn.execute(text("ALTER TABLE stories ADD COLUMN theme TEXT"))
+                migrations_run.append("theme")
+            
+            if 'metadata' not in existing_columns:
+                conn.execute(text("ALTER TABLE stories ADD COLUMN metadata JSON"))
+                migrations_run.append("metadata")
+            
+            conn.commit()
+        
+        if migrations_run:
+            print(f"✅ Database migration complete! Added: {', '.join(migrations_run)}")
+        else:
+            print("✓ Database schema up to date")
+            
+    except Exception as e:
+        print(f"⚠️ Migration check: {e}")
+    
     print("✓ Ghostwriter API started")
     print("✓ CORS configured")
     print("✓ Auth routes available at /api/auth")
