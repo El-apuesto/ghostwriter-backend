@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, EmailStr
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 from enum import Enum
 from datetime import datetime
 
@@ -33,14 +33,33 @@ class UserProfile(BaseModel):
 
 # ===== SIMPLE STORY GENERATION SCHEMA =====
 
+class Character(BaseModel):
+    name: str
+    role: Optional[str] = None
+    description: Optional[str] = None
+
+class TimelineEvent(BaseModel):
+    chapter: Optional[int] = None
+    description: str
+    mood: Optional[str] = None
+
 class StoryCreateRequest(BaseModel):
-    """Simple story generation request"""
+    """Story generation request - accepts both old and new frontend formats"""
+    # Old format (still supported)
     title: Optional[str] = None
     genre: str = Field(..., min_length=1)
-    theme: str = Field(..., min_length=10)
-    characters: Optional[str] = None
+    theme: Optional[str] = Field(None, min_length=10)  # Made optional since frontend uses premise
+    characters: Optional[Union[str, List[Character]]] = None  # Accepts string OR array
     setting: Optional[str] = None
-    length: str = Field(default="short")  # short, medium, long
+    length: str = Field(default="short")  # short, medium, long, novella, novel
+    
+    # New format (from enhanced frontend)
+    premise: Optional[str] = None  # Frontend sends this instead of theme
+    themes: Optional[List[str]] = None  # Array of theme strings
+    timeline: Optional[List[TimelineEvent]] = None  # Array of chapter events
+    tone: Optional[str] = None
+    writing_style: Optional[str] = None
+    emulate_author: Optional[str] = None
 
 class StoryResponse(BaseModel):
     """Story response for list views"""
@@ -78,17 +97,6 @@ class FictionLength(str, Enum):
     SAMPLE = "sample"
     NOVELLA = "novella"
     NOVEL = "novel"
-
-class Character(BaseModel):
-    name: str
-    role: Optional[str] = None
-    description: Optional[str] = None
-    quirks: Optional[List[str]] = None
-
-class TimelineEvent(BaseModel):
-    chapter: Optional[int] = None
-    description: str
-    mood: Optional[str] = None
 
 class FictionRequest(BaseModel):
     premise: str = Field(..., min_length=10, max_length=2000)
