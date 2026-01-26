@@ -9,136 +9,122 @@ from datetime import datetime
 from database import get_db
 from auth import get_current_user
 from models import User, Story
-from schemas import StoryResponse
-from story_generation import generate_story, create_story_record, generate_chapter_outline, generate_chapter
+from schemas import StoryCreateRequest, StoryResponse
+from story_generation import generate_story, create_story_record
 
 router = APIRouter(prefix="/api/stories", tags=["stories"])
 
 
 @router.post("/generate", response_model=StoryResponse)
 async def create_story(
-    request: Dict[str, Any],
+    request: StoryCreateRequest,
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    Generate a new fiction story with enhanced creative controls
+    Generate a new story
     
-    Accepts:
-    - premise (required): Story premise/theme
-    - length (required): sample, novella, novel, epic
-    - title (optional)
-    - genre (optional)
-    - setting (optional)
-    - tone (optional)
-    - writing_style (optional)
-    - emulate_author (optional)
-    - themes (optional): array of theme strings
-    - characters (optional): array of character objects
-    - timeline (optional): array of timeline event objects
+    Creates a story record and starts generation in the background.
+    Returns immediately with story ID and pending status.
+    Accepts both old format (theme, characters string) and new format (premise, themes array, characters array).
     """
     try:
-        # Extract and validate required fields
-        theme = request.get('theme') or request.get('premise')
+        # Handle theme vs premise (frontend sends premise, backend uses theme internally)
+        theme = request.premise if request.premise else request.theme
         if not theme:
-            raise HTTPException(status_code=400, detail="Missing required field: theme or premise")
+            raise HTTPException(status_code=400, detail="Either 'theme' or 'premise' is required")
         
-        length = request.get('length', 'sample')
-        genre = request.get('genre', 'Fiction')
-        
-        # Credit costs
-        credit_costs = {
-            'sample': 0,
-            'short': 0,
-            'novella': 50,
-            'novel': 100,
-            'epic': 150
-        }
-        
-        cost = credit_costs.get(length, 0)
-        
-        # Check credits
-        if current_user.credits_balance < cost:
-            raise HTTPException(
-                status_code=402,
-                detail=f"Insufficient credits. Need {cost}, you have {current_user.credits_balance}"
-            )
-        
-        # Deduct credits if not free
-        if cost > 0:
-            current_user.deduct_credits(cost)
-            db.commit()
-        
-        # Build enhanced theme with all optional fields
+        # Build enhanced theme with all new fields
         enhanced_theme = theme
         
-        if request.get('writing_style'):
-            enhanced_theme += f"\n\nWriting Style: {request['writing_style']}"
+        # Add themes array if provided
+        if request.themes:
+            enhanced_theme += f"\n\nThemes to explore: {', '.join(request.themes)}"
         
-        if request.get('tone'):
-            enhanced_theme += f"\nTone: {request['tone']}"
+        # Add tone if provided
+        if request.tone:
+            enhanced_theme += f"\n\nTone: {request.tone}"
         
-        if request.get('emulate_author'):
-            enhanced_theme += f"\nEmulate Author: {request['emulate_author']}"
+        # Add writing style if provided
+        if request.writing_style:
+            enhanced_theme += f"\n\nWriting Style: {request.writing_style}"
         
-        if request.get('themes'):
-            themes_list = [t for t in request['themes'] if t]
-            if themes_list:
-                enhanced_theme += f"\n\nThemes: {', '.join(themes_list)}"
+        # Add author emulation if provided
+        if request.emulate_author:
+            enhanced_theme += f"\n\nEmulate the style of: {request.emulate_author}"
         
-        if request.get('characters'):
-            chars = request['characters']
-            if chars:
-                enhanced_theme += "\n\nCharacters:"
-                for char in chars:
-                    if char.get('name'):
-                        enhanced_theme += f"\n- {char['name']}"
+        # Handle characters - convert array to string if needed
+        characters_text = None
+        if request.characters:
+            if isinstance(request.characters, list):
+                # Convert array of character objects to descriptive text
+                char_descriptions = []
+                for char in request.characters:
+                    if isinstance(char, dict):
+                        desc = char.get('name', 'Unnamed')
                         if char.get('role'):
-                            enhanced_theme += f" ({char['role']})"
+                            desc += f" ({char['role']})"
                         if char.get('description'):
-                            enhanced_theme += f": {char['description']}"
-                        if char.get('quirks'):
-                            quirks = [q for q in char['quirks'] if q]
-                            if quirks:
-                                enhanced_theme += f"\n  Quirks: {', '.join(quirks)}"
+                            desc += f": {char['description']}"
+                        char_descriptions.append(desc)
+                    else:
+                        # It's a Character object
+                        desc = char.name
+                        if char.role:
+                            desc += f" ({char.role})"
+                        if char.description:
+                            desc += f": {char.description}"
+                        char_descriptions.append(desc)
+                characters_text = '\n'.join(char_descriptions)
+            else:
+                # Already a string
+                characters_text = request.characters
         
-        if request.get('timeline'):
-            events = request['timeline']
-            if events:
-                enhanced_theme += "\n\nPlot Timeline:"
-                for event in events:
-                    if event.get('event'):
-                        enhanced_theme += f"\n- Chapter {event.get('chapter', '?')}: {event['event']}"
-                        if event.get('mood'):
-                            enhanced_theme += f" (Mood: {event['mood']})"
+        # Handle timeline/chapter structure if provided
+        if request.timeline:
+            timeline_descriptions = []
+            for event in request.timeline:
+                if isinstance(event, dict):
+                    desc = event.get('description', '')
+                    if event.get('chapter'):
+                        desc = f"Chapter {event['chapter']}: {desc}"
+                    if event.get('mood'):
+                        desc += f" (Mood: {event['mood']})"
+                    timeline_descriptions.append(desc)
+                else:
+                    # It's a TimelineEvent object
+                    desc = event.description
+                    if event.chapter:
+                        desc = f"Chapter {event.chapter}: {desc}"
+                    if event.mood:
+                        desc += f" (Mood: {event.mood})"
+                    timeline_descriptions.append(desc)
+            enhanced_theme += f"\n\nStory Structure:\n" + '\n'.join(timeline_descriptions)
         
         # Create story record
         story_data = {
             'user_id': current_user.id,
-            'title': request.get('title'),
-            'genre': genre,
-            'theme': enhanced_theme,
-            'characters': request.get('characters'),
-            'setting': request.get('setting'),
-            'length': length
+            'title': request.title,
+            'genre': request.genre,
+            'theme': enhanced_theme,  # Pass the enhanced theme
+            'characters': characters_text,
+            'setting': request.setting,
+            'length': request.length
         }
         
         story = create_story_record(db, story_data)
-        story.credits_cost = cost
-        db.commit()
-        db.refresh(story)
         
         # Start generation in background
         background_tasks.add_task(
             generate_story,
             db,
             story.id,
-            genre,
-            enhanced_theme,
-            request.get('characters'),
-            request.get('setting'),
-            length
+            request.genre,
+            enhanced_theme,  # Pass enhanced theme to generator
+            characters_text,
+            request.setting,
+            request.length
         )
         
         return story.to_dict()
@@ -146,7 +132,6 @@ async def create_story(
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
         raise HTTPException(
             status_code=500,
             detail=f"Failed to create story: {str(e)}"
@@ -266,7 +251,7 @@ async def generate_biography(
 
 def generate_biography_content(db: Session, story_id: int):
     """
-    Background task to generate biography with iterative chapter-by-chapter generation
+    Background task to generate biography content
     """
     from groq import Groq
     import os
@@ -279,150 +264,140 @@ def generate_biography_content(db: Session, story_id: int):
         story.status = 'generating'
         db.commit()
         
-        # Determine chapter structure based on length
-        length_config = {
-            'sample': {'words': 1500, 'chapters': 1, 'words_per_chapter': 1500},
-            'short_memoir': {'words': 30000, 'chapters': 5, 'words_per_chapter': 6000},
-            'standard_biography': {'words': 70000, 'chapters': 10, 'words_per_chapter': 7000},
-            'comprehensive': {'words': 100000, 'chapters': 15, 'words_per_chapter': 6667}
+        # Build comprehensive prompt from all fields
+        prompt_parts = [
+            f"Write a {story.length} {story.biography_type} about {story.subject_names}.",
+            f"Time period: {story.time_period_start} to {story.time_period_end}."
+        ]
+        
+        # Add all optional details
+        if story.birth_details:
+            bd = story.birth_details
+            if bd.get('date') or bd.get('place'):
+                prompt_parts.append(f"Born: {bd.get('date', '')} in {bd.get('place', '')}")
+            if bd.get('circumstances'):
+                prompt_parts.append(f"Birth circumstances: {bd['circumstances']}")
+        
+        if story.family_background:
+            prompt_parts.append(f"Family background: {story.family_background.get('text')}")
+        
+        if story.childhood:
+            prompt_parts.append(f"Childhood: {story.childhood.get('text')}")
+        
+        if story.career:
+            prompt_parts.append(f"Career: {story.career.get('text')}")
+        
+        if story.relationships:
+            prompt_parts.append(f"Relationships: {story.relationships.get('text')}")
+        
+        if story.major_events:
+            prompt_parts.append("\nMajor life events:")
+            for event in story.major_events:
+                if event.get('description'):
+                    prompt_parts.append(f"- {event.get('date', '')} {event.get('type', '')}: {event['description']}")
+                    if event.get('impact'):
+                        prompt_parts.append(f"  Impact: {event['impact']}")
+        
+        if story.challenges:
+            prompt_parts.append(f"\nChallenges overcome: {story.challenges.get('text')}")
+        
+        if story.achievements:
+            prompt_parts.append(f"\nAchievements: {story.achievements.get('text')}")
+        
+        if story.personality:
+            prompt_parts.append(f"\nPersonality traits: {', '.join(story.personality)}")
+        
+        if story.hobbies:
+            prompt_parts.append(f"Hobbies/interests: {', '.join(story.hobbies)}")
+        
+        if story.philosophy:
+            prompt_parts.append(f"\nPhilosophy/beliefs: {story.philosophy.get('text')}")
+        
+        if story.quotes:
+            prompt_parts.append(f"\nNotable quotes: {', '.join(['"' + q + '"' for q in story.quotes if q])}")
+        
+        if story.themes:
+            prompt_parts.append(f"\nThemes to emphasize: {', '.join(story.themes)}")
+        
+        if story.focus_areas:
+            prompt_parts.append(f"Focus on: {', '.join(story.focus_areas)}")
+        
+        # Writing style instructions
+        voice = story.narrative_voice or 'third_person_limited'
+        tone_text = story.tone or 'balanced and respectful'
+        
+        prompt_parts.append(f"\nWrite in {voice.replace('_', ' ')} narrative voice.")
+        prompt_parts.append(f"Tone: {tone_text}.")
+        prompt_parts.append("\nWrite a compelling, narrative-driven biography that reads like a story, not a resume.")
+        prompt_parts.append("Include vivid scenes, dialogue where appropriate, and emotional depth.")
+        prompt_parts.append("Be truthful and grounded in the provided facts.")
+        
+        full_prompt = "\n".join(prompt_parts)
+        
+        # Generate with Groq
+        client = Groq(api_key=os.getenv('GROQ_API_KEY'))
+        
+        system_prompt = """
+You are GhostWriter, a skilled biographer and memoirist with a gift for capturing authentic human experiences.
+You write with empathy, insight, and narrative flair, making real lives compelling without sensationalizing or fabricating.
+
+Your non-fiction writing is:
+- Truthful and grounded in provided facts
+- Emotionally resonant
+- Well-researched in tone
+- Narrative-driven (reads like a story, not a resume)
+- Balanced (acknowledges complexity and contradictions)
+- Respectful but honest
+
+Write ONLY the biography content - no preamble, no meta-commentary.
+        """
+        
+        # Determine word count target
+        word_targets = {
+            'sample': 1500,
+            'short_memoir': 30000,
+            'standard_biography': 70000,
+            'comprehensive': 100000
         }
+        target_words = word_targets.get(story.length, 1500)
         
-        config = length_config.get(story.length, length_config['sample'])
-        
-        # Build comprehensive theme from all biography fields
-        theme = build_biography_theme(story)
-        
-        # Generate chapter outline
-        print(f"Generating {config['chapters']}-chapter outline for biography...")
-        chapter_outline = generate_chapter_outline(
-            subject=theme,
-            genre='Biography',
-            num_chapters=config['chapters'],
-            total_words=config['words']
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"{full_prompt}\n\nTarget length: approximately {target_words} words."}
+            ],
+            temperature=0.8,
+            max_tokens=8000  # Will need chunking for longer stories
         )
         
-        story.story_metadata = {'chapter_outline': chapter_outline}
-        db.commit()
-        
-        # Generate chapters iteratively
-        all_chapters = []
-        context_summary = ""
-        
-        for i, chapter_info in enumerate(chapter_outline):
-            chapter_num = i + 1
-            chapter_title = chapter_info.get('title', f'Chapter {chapter_num}')
-            
-            print(f"Generating biography chapter {chapter_num}/{config['chapters']}: {chapter_title}")
-            
-            chapter_content = generate_chapter(
-                chapter_title=chapter_title,
-                subject=theme + f"\n\nChapter focus: {chapter_info.get('summary', '')}",
-                genre='Biography',
-                style='truthful and narrative-driven',
-                context_summary=context_summary,
-                target_word_count=config['words_per_chapter']
-            )
-            
-            all_chapters.append(chapter_content)
-            
-            # Update context summary with last 512 words
-            words = chapter_content.split()
-            context_summary = ' '.join(words[-512:]) if len(words) > 512 else chapter_content
-            
-            # Save progress after each chapter
-            story.content = '\n\n---\n\n'.join(all_chapters)
-            story.chapters_completed = chapter_num
-            story.total_chapters = config['chapters']
-            story.word_count = len(story.content.split())
-            story.updated_at = datetime.utcnow()
-            db.commit()
-            
-            print(f"Biography chapter {chapter_num} complete. Total words: {story.word_count}")
+        content = response.choices[0].message.content.strip()
+        word_count = len(content.split())
         
         # Generate title if not provided
         if not story.title:
-            client = Groq(api_key=os.getenv('GROQ_API_KEY'))
             title_response = client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
                 messages=[
                     {"role": "system", "content": "You are a publishing expert who creates compelling biography titles."},
-                    {"role": "user", "content": f"Create a 2-6 word title for this biography:\n\n{all_chapters[0][:500]}\n\nRespond with ONLY the title, no quotes or explanation."}
+                    {"role": "user", "content": f"Create a 2-6 word title for this biography:\n\n{content[:1000]}\n\nRespond with ONLY the title, no quotes or explanation."}
                 ],
                 temperature=0.7,
                 max_tokens=20
             )
             story.title = title_response.choices[0].message.content.strip().strip('"').strip("'")
         
-        # Mark as completed
+        # Save
+        story.content = content
+        story.word_count = word_count
         story.status = 'completed'
         story.completed_at = datetime.utcnow()
         db.commit()
         
-        print(f"Biography generation complete. Final word count: {story.word_count}")
-        
     except Exception as e:
-        print(f"Biography generation error: {str(e)}")
         story.status = 'failed'
         story.error_message = str(e)
         db.commit()
-
-
-def build_biography_theme(story: Story) -> str:
-    """
-    Build comprehensive theme from biography fields
-    """
-    parts = [
-        f"Write a {story.biography_type} about {story.subject_names}.",
-        f"Time period: {story.time_period_start} to {story.time_period_end}."
-    ]
-    
-    if story.birth_details:
-        bd = story.birth_details
-        if bd.get('date') or bd.get('place'):
-            parts.append(f"Born: {bd.get('date', '')} in {bd.get('place', '')}")
-        if bd.get('circumstances'):
-            parts.append(f"Birth circumstances: {bd['circumstances']}")
-    
-    if story.family_background:
-        parts.append(f"Family: {story.family_background.get('text', '')[:200]}")
-    
-    if story.childhood:
-        parts.append(f"Childhood: {story.childhood.get('text', '')[:200]}")
-    
-    if story.career:
-        parts.append(f"Career: {story.career.get('text', '')[:200]}")
-    
-    if story.relationships:
-        parts.append(f"Relationships: {story.relationships.get('text', '')[:200]}")
-    
-    if story.challenges:
-        parts.append(f"Challenges: {story.challenges.get('text', '')[:200]}")
-    
-    if story.achievements:
-        parts.append(f"Achievements: {story.achievements.get('text', '')[:200]}")
-    
-    if story.personality:
-        parts.append(f"Personality: {', '.join(story.personality)}")
-    
-    if story.hobbies:
-        parts.append(f"Hobbies: {', '.join(story.hobbies)}")
-    
-    if story.philosophy:
-        parts.append(f"Philosophy: {story.philosophy.get('text', '')[:150]}")
-    
-    if story.themes:
-        parts.append(f"Themes: {', '.join(story.themes)}")
-    
-    if story.focus_areas:
-        parts.append(f"Focus on: {', '.join(story.focus_areas)}")
-    
-    voice = story.narrative_voice or 'third_person_limited'
-    tone = story.tone or 'balanced and respectful'
-    parts.append(f"Voice: {voice.replace('_', ' ')}. Tone: {tone}.")
-    parts.append("Write compelling narrative-driven biography that reads like a story, not a resume.")
-    parts.append("Be truthful and grounded in provided facts.")
-    
-    return '\n'.join(parts)
 
 
 @router.get("/", response_model=List[StoryResponse])
