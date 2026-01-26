@@ -27,87 +27,60 @@ async def create_story(
     
     Creates a story record and starts generation in the background.
     Returns immediately with story ID and pending status.
-    Accepts both old format (theme, characters string) and new format (premise, themes array, characters array).
     """
     try:
-        # Handle theme vs premise (frontend sends premise, backend uses theme internally)
-        theme = request.premise if request.premise else request.theme
+        # Handle theme vs premise (frontend may send either)
+        theme = getattr(request, 'premise', None) or request.theme
         if not theme:
             raise HTTPException(status_code=400, detail="Either 'theme' or 'premise' is required")
         
-        # Build enhanced theme with all new fields
+        # Build enhanced theme with optional new fields if provided
         enhanced_theme = theme
         
-        # Add themes array if provided
-        if request.themes:
-            enhanced_theme += f"\n\nThemes to explore: {', '.join(request.themes)}"
+        if hasattr(request, 'themes') and request.themes:
+            enhanced_theme += f"\n\nThemes: {', '.join(request.themes)}"
         
-        # Add tone if provided
-        if request.tone:
+        if hasattr(request, 'tone') and request.tone:
             enhanced_theme += f"\n\nTone: {request.tone}"
         
-        # Add writing style if provided
-        if request.writing_style:
+        if hasattr(request, 'writing_style') and request.writing_style:
             enhanced_theme += f"\n\nWriting Style: {request.writing_style}"
         
-        # Add author emulation if provided
-        if request.emulate_author:
-            enhanced_theme += f"\n\nEmulate the style of: {request.emulate_author}"
+        if hasattr(request, 'emulate_author') and request.emulate_author:
+            enhanced_theme += f"\n\nEmulate style of: {request.emulate_author}"
         
         # Handle characters - convert array to string if needed
-        characters_text = None
-        if request.characters:
-            if isinstance(request.characters, list):
-                # Convert array of character objects to descriptive text
-                char_descriptions = []
-                for char in request.characters:
-                    if isinstance(char, dict):
-                        desc = char.get('name', 'Unnamed')
-                        if char.get('role'):
-                            desc += f" ({char['role']})"
-                        if char.get('description'):
-                            desc += f": {char['description']}"
-                        char_descriptions.append(desc)
-                    else:
-                        # It's a Character object
-                        desc = char.name
-                        if char.role:
-                            desc += f" ({char.role})"
-                        if char.description:
-                            desc += f": {char.description}"
-                        char_descriptions.append(desc)
-                characters_text = '\n'.join(char_descriptions)
-            else:
-                # Already a string
-                characters_text = request.characters
+        characters_text = request.characters
+        if isinstance(request.characters, list):
+            char_descriptions = []
+            for char in request.characters:
+                if hasattr(char, 'name'):
+                    desc = char.name
+                    if hasattr(char, 'role') and char.role:
+                        desc += f" ({char.role})"
+                    if hasattr(char, 'description') and char.description:
+                        desc += f": {char.description}"
+                    char_descriptions.append(desc)
+            characters_text = '\n'.join(char_descriptions) if char_descriptions else None
         
-        # Handle timeline/chapter structure if provided
-        if request.timeline:
+        # Handle timeline if provided
+        if hasattr(request, 'timeline') and request.timeline:
             timeline_descriptions = []
             for event in request.timeline:
-                if isinstance(event, dict):
-                    desc = event.get('description', '')
-                    if event.get('chapter'):
-                        desc = f"Chapter {event['chapter']}: {desc}"
-                    if event.get('mood'):
-                        desc += f" (Mood: {event['mood']})"
-                    timeline_descriptions.append(desc)
-                else:
-                    # It's a TimelineEvent object
+                if hasattr(event, 'description'):
                     desc = event.description
-                    if event.chapter:
+                    if hasattr(event, 'chapter') and event.chapter:
                         desc = f"Chapter {event.chapter}: {desc}"
-                    if event.mood:
-                        desc += f" (Mood: {event.mood})"
                     timeline_descriptions.append(desc)
-            enhanced_theme += f"\n\nStory Structure:\n" + '\n'.join(timeline_descriptions)
+            if timeline_descriptions:
+                enhanced_theme += f"\n\nStory Structure:\n" + '\n'.join(timeline_descriptions)
         
         # Create story record
         story_data = {
             'user_id': current_user.id,
             'title': request.title,
             'genre': request.genre,
-            'theme': enhanced_theme,  # Pass the enhanced theme
+            'theme': enhanced_theme,
             'characters': characters_text,
             'setting': request.setting,
             'length': request.length
@@ -121,7 +94,7 @@ async def create_story(
             db,
             story.id,
             request.genre,
-            enhanced_theme,  # Pass enhanced theme to generator
+            enhanced_theme,
             characters_text,
             request.setting,
             request.length
@@ -129,8 +102,6 @@ async def create_story(
         
         return story.to_dict()
     
-    except HTTPException:
-        raise
     except Exception as e:
         raise HTTPException(
             status_code=500,
