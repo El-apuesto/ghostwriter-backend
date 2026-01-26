@@ -82,7 +82,7 @@ class Story(Base):
     themes = Column(JSON)  # Array of theme strings
     characters = Column(JSON)  # Array of {name, role, description, quirks}
     timeline = Column(JSON)  # Array of {chapter, description, mood}
-    story_metadata = Column(JSON)  # General metadata storage (chapter outlines, etc.) - RENAMED from 'metadata'
+    metadata = Column(JSON)  # General metadata storage (chapter outlines, etc.)
     
     # Biography fields
     biography_type = Column(String(50))  # autobiography, biography, memoir
@@ -147,7 +147,7 @@ class Story(Base):
             'themes': self.themes,
             'characters': self.characters,
             'timeline': self.timeline,
-            'story_metadata': self.story_metadata,
+            'metadata': self.metadata,
             'biography_type': self.biography_type,
             'subject_names': self.subject_names,
             'time_period_start': self.time_period_start,
