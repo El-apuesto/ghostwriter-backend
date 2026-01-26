@@ -1,4 +1,4 @@
-"""Main FastAPI application with all routes"""
+"""Main FastAPI application with all routes and auto-migration"""
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -12,7 +12,7 @@ app.add_middleware(
         "http://localhost:3000",
         "http://localhost:5173",
         "https://ghostwriter-frontend-tawny.vercel.app",
-        "https://*.vercel.app",  # Allow all Vercel preview deployments
+        "https://*.vercel.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -49,10 +49,10 @@ try:
 except ImportError:
     print("⚠️ webhooks.py not found")
 
-# Health check endpoint
+# Health check endpoints
 @app.get("/")
 async def root():
-    return {"message": "Ghostwriter API is running"}
+    return {"message": "Ghostwriter API is running", "version": "1.0.0"}
 
 @app.get("/health")
 async def health_check():
@@ -106,10 +106,11 @@ async def startup_event():
     
     print("✓ Ghostwriter API started")
     print("✓ CORS configured")
-    print("✓ Auth routes available at /api/auth")
-    print("✓ Story routes available at /api/stories")
-    print("✓ Feature routes available at /api/stories/{id}/cover|export|blurb|author-bio")
-    print("✓ Payment routes available at /api/payments")
-    print("✓ Webhook routes available at /api/webhooks")
+    print("✓ Auth routes: /api/auth/*")
+    print("✓ Story routes: /api/stories/*")
+    print("✓ Feature routes: /api/stories/{id}/cover|export|blurb|author-bio")
+    print("✓ Payment routes: /api/payments/*")
+    print("✓ Webhook routes: /api/webhooks/*")
+    print("🟢 Ready to accept requests")
 
 # Run with: uvicorn main:app --host 0.0.0.0 --port $PORT
