@@ -12,7 +12,6 @@ app.add_middleware(
         "http://localhost:3000",
         "http://localhost:5173",
         "https://ghostwriter-frontend-tawny.vercel.app",
-        "https://*.vercel.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -90,9 +89,9 @@ async def startup_event():
                 conn.execute(text("ALTER TABLE stories ADD COLUMN theme TEXT"))
                 migrations_run.append("theme")
             
-            if 'metadata' not in existing_columns:
-                conn.execute(text("ALTER TABLE stories ADD COLUMN metadata JSON"))
-                migrations_run.append("metadata")
+            if 'story_metadata' not in existing_columns:
+                conn.execute(text("ALTER TABLE stories ADD COLUMN story_metadata JSON"))
+                migrations_run.append("story_metadata")
             
             conn.commit()
         
