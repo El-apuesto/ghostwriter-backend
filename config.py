@@ -2,8 +2,8 @@ from pydantic_settings import BaseSettings
 from typing import Optional
 
 class Settings(BaseSettings):
-    # Database
-    database_url: str = "sqlite:///./ghostwriter.db"
+    # Database - PostgreSQL (Neon) for production
+    database_url: str = "postgresql://user:password@host/dbname"
     
     # LLM Configuration (Text Generation)
     llm_provider: str = "groq"  # "ollama" or "groq"
