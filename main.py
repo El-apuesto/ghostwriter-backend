@@ -5,14 +5,16 @@ from fastapi.middleware.cors import CORSMiddleware
 # Create app
 app = FastAPI(title="Ghostwriter API", version="1.0.0")
 
-# Configure CORS
+# Configure CORS - allow all Vercel deployments
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
         "http://localhost:5173",
         "https://ghostwriter-frontend-tawny.vercel.app",
+        "https://*.vercel.app",
     ],
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
