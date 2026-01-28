@@ -24,10 +24,10 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_expiration_days: int = 7
     
-    # Stripe (optional until payment implementation)
-    stripe_secret_key: Optional[str] = None
-    stripe_publishable_key: Optional[str] = None
-    stripe_webhook_secret: Optional[str] = None
+    # Stripe
+    stripe_secret_key: str
+    stripe_publishable_key: str
+    stripe_webhook_secret: str
     
     # App Settings
     frontend_url: str = "http://localhost:5173"
