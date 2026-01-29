@@ -29,6 +29,10 @@ class User(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     last_login = Column(DateTime, nullable=True)
     
+    # Password reset fields
+    reset_token = Column(String(255), nullable=True)
+    reset_token_expires = Column(DateTime, nullable=True)
+    
     # Relationships
     stories = relationship("Story", back_populates="user", cascade="all, delete-orphan")
     
