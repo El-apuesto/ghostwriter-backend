@@ -6,18 +6,16 @@ class Settings(BaseSettings):
     database_url: str = "postgresql://user:password@host/dbname"
     
     # LLM Configuration (Text Generation)
-    llm_provider: str = "groq"  # "ollama" or "groq"
+    llm_provider: str = "groq"  # "ollama", "groq", or "xai"
     ollama_base_url: str = "http://localhost:11434"
     groq_api_key: Optional[str] = None
+    xai_api_key: Optional[str] = None  # Used for xAI Grok text generation and AI covers
     
-    # Image Generation (xAI Grok for covers)
-    xai_api_key: Optional[str] = None  # Used ONLY for AI cover generation
-    
-    # Model Selection (Groq models for text)
-    creative_model: str = "llama-3.3-70b-versatile"      # For creative fiction
-    structured_model: str = "llama-3.3-70b-versatile"    # For outlines/structure
-    dialogue_model: str = "llama-3.3-70b-versatile"      # For dialogue
-    biography_model: str = "llama-3.3-70b-versatile"     # For biographies
+    # Model Selection (varies by provider)
+    creative_model: str = "llama-3.3-70b-versatile"      # For creative fiction (Groq) or grok-2-1212 (xAI)
+    structured_model: str = "llama-3.3-70b-versatile"    # For outlines/structure (Groq) or grok-2-1212 (xAI)
+    dialogue_model: str = "llama-3.3-70b-versatile"      # For dialogue (Groq) or grok-2-1212 (xAI)
+    biography_model: str = "llama-3.3-70b-versatile"     # For biographies (Groq) or grok-2-1212 (xAI)
     
     # Authentication
     jwt_secret_key: str = "your-super-secret-jwt-key-change-in-production"
@@ -45,14 +43,17 @@ class Settings(BaseSettings):
 CREDIT_COSTS = {
     # Fiction
     "fiction_sample": 0,
-    "fiction_novella": 50,
-    "fiction_novel": 100,
+    "fiction_novella": 130,
+    "fiction_novel": 210,
+    
+    # Premium Fiction
+    "fiction_premium_novella": 150,
+    "fiction_premium_novel": 230,
     
     # Biography
     "biography_sample": 0,
-    "biography_short_memoir": 50,
-    "biography_standard": 75,
-    "biography_comprehensive": 125,
+    "biography_short_memoir": 130,
+    "biography_standard": 130,
     
     # Extras
     "ebook_cover": 10,
@@ -66,13 +67,7 @@ CREDIT_COSTS = {
 
 # Credit packs (price in cents, credits amount)
 CREDIT_PACKS = {
-    "micro": {"price": 500, "credits": 20, "name": "Micro Top-Up"},
-    "small": {"price": 1000, "credits": 40, "name": "Small Top-Up"},
-    "medium": {"price": 1500, "credits": 60, "name": "Medium Top-Up"},
-    "starter": {"price": 2500, "credits": 100, "name": "Starter Pack"},
-    "value": {"price": 6000, "credits": 250, "name": "Value Pack", "bonus": 4},
-    "pro": {"price": 12000, "credits": 550, "name": "Pro Pack", "bonus": 15},
-    "ultimate": {"price": 24000, "credits": 1200, "name": "Ultimate Pack", "bonus": 25},
+    "top_up": {"price": 500, "credits": 50, "name": "Top-Up Pack"},
 }
 
 settings = Settings()

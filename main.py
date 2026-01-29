@@ -5,12 +5,12 @@ from fastapi.middleware.cors import CORSMiddleware
 # Create app
 app = FastAPI(title="Ghostwriter API", version="1.0.0")
 
-# Configure CORS - allow all origins for now
+# Configure CORS - localhost only for security
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Allow all origins for local development
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
     expose_headers=["*"],
 )

@@ -6,7 +6,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 class LLMClient:
-    """Universal LLM client supporting Ollama and Groq"""
+    """Universal LLM client supporting Ollama, Groq, and xAI"""
     
     def __init__(self):
         self.provider = settings.llm_provider
@@ -25,6 +25,8 @@ class LLMClient:
             return self._ollama_generate(prompt, system_prompt, model, temperature)
         elif self.provider == "groq":
             return self._groq_generate(prompt, system_prompt, model, temperature, max_tokens)
+        elif self.provider == "xai":
+            return self._xai_generate(prompt, system_prompt, model, temperature, max_tokens)
         else:
             raise ValueError(f"Unsupported LLM provider: {self.provider}")
     
@@ -85,6 +87,43 @@ class LLMClient:
         except Exception as e:
             logger.error(f"Groq generation failed: {str(e)}")
             raise Exception(f"The spirits are drunk on cloud credits: {str(e)}")
+
+    def _xai_generate(
+        self,
+        prompt: str,
+        system_prompt: str,
+        model: str,
+        temperature: float,
+        max_tokens: int
+    ) -> str:
+        """Call xAI Grok API"""
+        try:
+            headers = {
+                "Authorization": f"Bearer {settings.xai_api_key}",
+                "Content-Type": "application/json"
+            }
+            
+            data = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": temperature,
+                "max_tokens": max_tokens
+            }
+            
+            response = requests.post(
+                "https://api.x.ai/v1/chat/completions",
+                headers=headers,
+                json=data,
+                timeout=120
+            )
+            response.raise_for_status()
+            return response.json()["choices"][0]["message"]["content"]
+        except Exception as e:
+            logger.error(f"xAI generation failed: {str(e)}")
+            raise Exception(f"Grok is contemplating the void: {str(e)}")
 
 # Singleton instance
 llm = LLMClient()

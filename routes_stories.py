@@ -1,10 +1,11 @@
 """
 Story routes for generating and managing stories
 """
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request
 from sqlalchemy.orm import Session
 from typing import List, Dict, Any, Optional
 from datetime import datetime
+import json
 
 from database import get_db
 from auth import get_current_user
@@ -17,7 +18,7 @@ router = APIRouter(prefix="/api/stories", tags=["stories"])
 
 @router.post("/generate", response_model=StoryResponse)
 async def create_story(
-    request: StoryCreateRequest,
+    request: Request,
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -29,31 +30,53 @@ async def create_story(
     Returns immediately with story ID and pending status.
     """
     try:
+        # Get raw request body for debugging
+        body = await request.body()
+        print(f"Raw request body: {body}")
+        print(f"Raw request body decoded: {body.decode()}")
+        
+        # Parse JSON manually
+        try:
+            json_data = json.loads(body.decode())
+            print(f"Parsed JSON: {json_data}")
+        except json.JSONDecodeError as e:
+            print(f"JSON decode error: {e}")
+            raise HTTPException(status_code=400, detail="Invalid JSON in request body")
+        
+        # Validate with Pydantic
+        try:
+            story_request = StoryCreateRequest(**json_data)
+            print(f"Validated request: {story_request}")
+            print(f"Validated request data: {story_request.dict()}")
+        except Exception as e:
+            print(f"Pydantic validation error: {e}")
+            raise HTTPException(status_code=422, detail=f"Validation error: {str(e)}")
+        
         # Handle theme vs premise (frontend may send either)
-        theme = getattr(request, 'premise', None) or request.theme
+        theme = getattr(story_request, 'premise', None) or story_request.theme
         if not theme:
             raise HTTPException(status_code=400, detail="Either 'theme' or 'premise' is required")
         
         # Build enhanced theme with optional new fields if provided
         enhanced_theme = theme
         
-        if hasattr(request, 'themes') and request.themes:
-            enhanced_theme += f"\n\nThemes: {', '.join(request.themes)}"
+        if hasattr(story_request, 'themes') and story_request.themes:
+            enhanced_theme += f"\n\nThemes: {', '.join(story_request.themes)}"
         
-        if hasattr(request, 'tone') and request.tone:
-            enhanced_theme += f"\n\nTone: {request.tone}"
+        if hasattr(story_request, 'tone') and story_request.tone:
+            enhanced_theme += f"\n\nTone: {story_request.tone}"
         
-        if hasattr(request, 'writing_style') and request.writing_style:
-            enhanced_theme += f"\n\nWriting Style: {request.writing_style}"
+        if hasattr(story_request, 'writing_style') and story_request.writing_style:
+            enhanced_theme += f"\n\nWriting Style: {story_request.writing_style}"
         
-        if hasattr(request, 'emulate_author') and request.emulate_author:
-            enhanced_theme += f"\n\nEmulate style of: {request.emulate_author}"
+        if hasattr(story_request, 'emulate_author') and story_request.emulate_author:
+            enhanced_theme += f"\n\nEmulate style of: {story_request.emulate_author}"
         
         # Handle characters - convert array to string if needed
-        characters_text = request.characters
-        if isinstance(request.characters, list):
+        characters_text = story_request.characters
+        if isinstance(story_request.characters, list):
             char_descriptions = []
-            for char in request.characters:
+            for char in story_request.characters:
                 if hasattr(char, 'name'):
                     desc = char.name
                     if hasattr(char, 'role') and char.role:
@@ -64,9 +87,9 @@ async def create_story(
             characters_text = '\n'.join(char_descriptions) if char_descriptions else None
         
         # Handle timeline if provided
-        if hasattr(request, 'timeline') and request.timeline:
+        if hasattr(story_request, 'timeline') and story_request.timeline:
             timeline_descriptions = []
-            for event in request.timeline:
+            for event in story_request.timeline:
                 if hasattr(event, 'description'):
                     desc = event.description
                     if hasattr(event, 'chapter') and event.chapter:
@@ -78,12 +101,12 @@ async def create_story(
         # Create story record
         story_data = {
             'user_id': current_user.id,
-            'title': request.title,
-            'genre': request.genre,
+            'title': story_request.title,
+            'genre': story_request.genre,
             'theme': enhanced_theme,
             'characters': characters_text,
-            'setting': request.setting,
-            'length': request.length
+            'setting': story_request.setting,
+            'length': story_request.length
         }
         
         story = create_story_record(db, story_data)
@@ -93,11 +116,11 @@ async def create_story(
             generate_story,
             db,
             story.id,
-            request.genre,
+            story_request.genre,
             enhanced_theme,
             characters_text,
-            request.setting,
-            request.length
+            story_request.setting,
+            story_request.length
         )
         
         return story.to_dict()
@@ -383,9 +406,15 @@ async def get_my_stories(
     
     Returns all stories for the current user, ordered by most recent.
     """
+    print(f"Getting stories for user: {current_user.id} ({current_user.email})")
+    
     stories = db.query(Story).filter(
         Story.user_id == current_user.id
     ).order_by(Story.created_at.desc()).offset(offset).limit(limit).all()
+    
+    print(f"Found {len(stories)} stories for user {current_user.id}")
+    for story in stories:
+        print(f"  - Story ID: {story.id}, Title: {story.title}, Status: {story.status}")
     
     return [story.to_dict() for story in stories]
 
