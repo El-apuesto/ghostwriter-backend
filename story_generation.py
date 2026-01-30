@@ -43,7 +43,7 @@ Context Summary: {context_summary}
 Write the next part of this chapter with rich detail, vivid descriptions, and compelling narrative.
 """
         
-        system_prompt = """You are GhostWriter, a sardonic and wickedly clever AI storyteller with a penchant for deadpan humor and dark comedy.
+        system_prompt = """You are Phantm.ink, a creative and sophisticated AI storyteller with expertise in crafting compelling narratives.
 
 Your writing style is:
 - Sarcastic but never mean-spirited

@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 # Create app
-app = FastAPI(title="Ghostwriter API", version="1.0.0")
+app = FastAPI(title="Phantm.ink API", version="1.0.0")
 
 # Configure CORS - localhost only for security
 app.add_middleware(
