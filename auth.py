@@ -48,10 +48,16 @@ def get_current_user(
     db: Session = Depends(get_db)  # ✅ This was the bug!
 ) -> User:
     """Get current authenticated user from JWT token"""
+    print(f"DEBUG: Auth - Received credentials: {credentials}")
     token = credentials.credentials
+    print(f"DEBUG: Auth - Token: {token[:20]}...")
+    
     payload = verify_token(token)
+    print(f"DEBUG: Auth - Token payload: {payload}")
     
     user_id = payload.get("user_id")
+    print(f"DEBUG: Auth - User ID from token: {user_id}")
+    
     if user_id is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -59,6 +65,10 @@ def get_current_user(
         )
     
     user = db.query(User).filter(User.id == user_id).first()
+    print(f"DEBUG: Auth - User found: {user is not None}")
+    if user:
+        print(f"DEBUG: Auth - User email: {user.email}, Active: {user.is_active}")
+    
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
