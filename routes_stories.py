@@ -30,6 +30,12 @@ async def create_story(
     Returns immediately with story ID and pending status.
     """
     try:
+        # Debug: Print current user info
+        print(f"DEBUG: Current user ID: {current_user.id}")
+        print(f"DEBUG: Current user email: {current_user.email}")
+        print(f"DEBUG: User credits: {current_user.credits_balance}")
+        print(f"DEBUG: User active: {current_user.is_active}")
+        
         # Get raw request body for debugging
         body = await request.body()
         print(f"Raw request body: {body}")

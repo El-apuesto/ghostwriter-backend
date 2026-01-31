@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     # LLM Configuration (Text Generation)
     llm_provider: str = "groq"  # "ollama", "groq", or "xai"
     ollama_base_url: str = "http://localhost:11434"
-    groq_api_key: Optional[str] = None
+    groq_api_key: Optional[str] = None  # Will be loaded from GROQ_API_KEY environment variable
     xai_api_key: Optional[str] = None  # Used for xAI Grok text generation and AI covers
     
     # Model Selection (varies by provider)
