@@ -11,8 +11,8 @@ from auth import create_access_token, get_current_user
 import bcrypt
 import secrets
 import smtplib
-from email.mime.text import MimeText
-from email.mime.multipart import MimeMultipart
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 router = APIRouter(prefix="/api/auth", tags=["authentication"])
 
