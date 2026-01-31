@@ -173,10 +173,13 @@ def generate_story(db, story_id, genre, theme, characters=None, setting=None, le
     """
     try:
         from models import Story
+        print(f"DEBUG: Looking for story ID: {story_id}")
         story = db.query(Story).filter(Story.id == story_id).first()
         
         if not story:
             raise ValueError(f"Story with ID {story_id} not found")
+        
+        print(f"DEBUG: Found story: {story.id}, Status: {story.status}")
         
         # Update status to generating and commit immediately
         story.status = 'generating'
@@ -184,6 +187,8 @@ def generate_story(db, story_id, genre, theme, characters=None, setting=None, le
         db.refresh(story)
         
         print(f"Starting story generation for ID: {story_id}")
+        print(f"DEBUG: Genre: {genre}, Theme: {theme[:100]}...")
+        print(f"DEBUG: Length: {length}")
         
         # Determine chapter structure based on length
         length_config = {
@@ -268,7 +273,10 @@ def generate_story(db, story_id, genre, theme, characters=None, setting=None, le
         return story
         
     except Exception as e:
-        print(f"Error generating story: {str(e)}")
+        print(f"ERROR: Story generation failed: {str(e)}")
+        print(f"ERROR: Exception type: {type(e).__name__}")
+        import traceback
+        print(f"ERROR: Traceback: {traceback.format_exc()}")
         
         # Update story status to failed
         try:
@@ -277,8 +285,9 @@ def generate_story(db, story_id, genre, theme, characters=None, setting=None, le
                 story.status = 'failed'
                 story.error_message = str(e)
                 db.commit()
+                print(f"DEBUG: Updated story status to failed with error: {str(e)}")
         except Exception as db_error:
-            print(f"Error updating story status: {str(db_error)}")
+            print(f"ERROR: Error updating story status: {str(db_error)}")
             db.rollback()
         
         raise
