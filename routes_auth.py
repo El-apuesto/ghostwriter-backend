@@ -26,8 +26,8 @@ async def signup(user_data: UserSignup, db: Session = Depends(get_db)):
     - Password must be at least 8 characters
     - Returns JWT token and user info
     """
-    # Check if user already exists
-    existing_user = db.query(User).filter(User.email == user_data.email).first()
+    # Check if user already exists (case insensitive)
+    existing_user = db.query(User).filter(User.email.ilike(user_data.email)).first()
     if existing_user:
         raise HTTPException(
             status_code=400,
