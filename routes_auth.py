@@ -82,8 +82,8 @@ async def login(credentials: UserLogin, db: Session = Depends(get_db)):
     - Validates email and password
     - Returns JWT token and user info
     """
-    # Find user by email
-    user = db.query(User).filter(User.email == credentials.email).first()
+    # Find user by email (case insensitive)
+    user = db.query(User).filter(User.email.ilike(credentials.email)).first()
     
     if not user:
         raise HTTPException(

@@ -48,7 +48,7 @@ class StoryCreateRequest(BaseModel):
     # Old format (still supported)
     title: Optional[str] = None
     genre: str = Field(..., min_length=1)
-    theme: Optional[str] = Field(None, min_length=10)  # Made optional since frontend uses premise
+    theme: Optional[str] = None  # Made optional since frontend uses premise
     characters: Optional[Union[str, List[Character]]] = None  # Accepts string OR array
     setting: Optional[str] = None
     length: str = Field(default="short")  # short, medium, long, novella, novel
